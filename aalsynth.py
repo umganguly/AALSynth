@@ -4,7 +4,7 @@
 #                  to remove commented and unused code
 # "test imports" means to determine if each of the imported packages needs to be there
 # General  -- AALSynth documentation and user guide
-#          -- Github archive
+#          -- Github archive -- doing this now!
 #          -- RL NV COS paper
 # aalsynth -- Clean up, test imports
 #          -- Read in parameters, directory locations, program flow from ASCII file
