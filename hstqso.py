@@ -4,20 +4,21 @@ import os
 import time              as tm
 import urllib
 
-from astropy             import units       as u
-from astropy             import constants   as const
-from astropy.convolution import convolve, Gaussian1DKernel
-from astropy.coordinates import SkyCoord
-from astropy.io          import fits, ascii
-from astropy.table       import Table
-from astroquery.ipac.ned import Ned
-from astroquery.mast     import MastMissions, Observations
-from multiprocessing     import Pool
-from scipy.interpolate   import CubicSpline, interp1d
-from scipy.optimize      import minimize, differential_evolution
-from scipy.stats         import chi2
-from scipy.stats         import f           as Ftest
-from tqdm                import tqdm
+from astropy               import units       as u
+from astropy               import constants   as const
+from astropy.convolution   import convolve, Gaussian1DKernel
+from astropy.coordinates   import SkyCoord
+from astropy.io            import fits, ascii
+from astropy.table         import Table
+from astroquery.ipac.ned   import Ned
+from astroquery.mast       import MastMissions, Observations
+from matplotlib.transforms import Bbox
+from multiprocessing       import Pool
+from scipy.interpolate     import CubicSpline, interp1d
+from scipy.optimize        import minimize, differential_evolution
+from scipy.stats           import chi2
+from scipy.stats           import f           as Ftest
+from tqdm                  import tqdm
 
 from atomic                  import atomic
 from doppler                 import calcvel,calcwave
@@ -25,6 +26,7 @@ from doppler                 import calcvel,calcwave
 ###############################################################################################
 class hstqso:
     def __init__(self,
+                 basedir,
                  coords,
                  qfileroot,
                  zqso,
@@ -38,10 +40,12 @@ class hstqso:
         self.x1dlistfile = qfileroot+"_x1d_list.fits"
         self.redospline  = redospline
 
-        if os.name == 'nt':
-            self.basedir = "D:\\ganguly\\AALSynth2\\Python\\mastDownload\\HST\\"
-        else:
-            self.basedir = "/mnt/data/AALSynth2/Python/mastDownload/HST/"
+        if not os.path.exists(basedir+"mastDownload"):
+            os.makedirs(basedir+"mastDownload")
+        if not os.path.exists(basedir+"mastDownload/HST"):
+                os.makedirs(basedir+"mastDownload/HST")
+        self.basedir = basedir+"mastDownload/HST/"
+
         print(f'basedir = {self.basedir}')
 
         self.lsfdir = self.basedir+"LSF/"
@@ -576,15 +580,15 @@ class hstqso:
         elif detector == "NUV":
             xfull = np.arange(1024)
             # Read in the dispersion relationship here for the segments
-            disp_coeff_a, wavelength_a = get_disp_params(disptab, cenwave, "NUVA", x=xfull)
-            disp_coeff_b, wavelength_b = get_disp_params(disptab, cenwave, "NUVB", x=xfull)
-            disp_coeff_c, wavelength_c = get_disp_params(disptab, cenwave, "NUVC", x=xfull)
+            disp_coeff_a, wavelength_a = self._lsf_get_disp_params(disptab, cenwave, "NUVA", x=xfull)
+            disp_coeff_b, wavelength_b = self._lsf_get_disp_params(disptab, cenwave, "NUVB", x=xfull)
+            disp_coeff_c, wavelength_c = self._lsf_get_disp_params(disptab, cenwave, "NUVC", x=xfull)
 
             # Get the step size info from the NUVB 1st order dispersion coefficient
             step = disp_coeff_b[1] * u.Angstrom
 
             # Read in the lsf file
-            lsf, pix, w = read_lsf(lsf_file)
+            lsf, pix, w = self._lsf_read_file(lsf_file)
 
             # take median spacing between original LSF kernels
             deltaw = np.median(np.diff(w))
@@ -623,8 +627,8 @@ class hstqso:
             velocity = const.c.to(u.km/u.s) * beta
             vdx = np.extract((velocity > np.min(self.vlims)) & (velocity < np.max(self.vlims)), range(velocity.size))
             if vdx.size > 0:
-                ax[i,0].step(velocity[vdx],totflux[vdx].value/continuum(totwave[vdx]),label=self.pltlabs[i])
-                ax[i,0].step(velocity[vdx],(1/np.sqrt(totivar[vdx].value))/continuum(totwave[vdx]))
+                ax[i,0].step(velocity[vdx],totflux[vdx].value/self.continuum(totwave[vdx]),label=self.pltlabs[i])
+                ax[i,0].step(velocity[vdx],(1/np.sqrt(totivar[vdx].value))/self.continuum(totwave[vdx]))
                 ax[i,0].plot(velocity[vdx],np.zeros(vdx.size),"k--")
                 ax[i,0].plot(velocity[vdx],np.ones(vdx.size),"k--")
                 for v in self.vm:

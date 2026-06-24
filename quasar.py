@@ -32,60 +32,80 @@ from doppler                 import calcvel,calcwave
 from hstqso                  import hstqso
 from mcgv                    import mcgv
 from ntdisk                  import ntdisk
+from readpars                import readpars
 from tqdm                    import tqdm
 
 class Quasar:
-  def __init__(self,verbose,datapath,cloudypath,zqso,                # Program flow
-               inclination,robs,ra,dec,                              # Observer parameters
-               mbh, sbh,                                             # Black Hole parameters
-               nr, rlo, rhi, mdot, alpha,                            # Accretion disk parameters
-               xclp, yclp, zcl, rhoindex, logrhoscale, logrho0, vcl, # Absorber parameters
-               anum,ion,trandx,                                      # Atomic physics parameters
-               plot_code,vlo,vhi,vres,nproc,                         # Spectral synthesis parameters
-               wind = True, abscloud = True,                         # Optional program flow
-               minlox=8.5,                                           # Optional atomic physics parameters
-               dtheta_fac = 2.0,                                     # Optional accretion disk parameters
-               absfile = "Clouds.fits"                               # Optional absorber parameters
-               ):
+  #def __init__(self,verbose,datapath,cloudypath,zqso,                # Program flow
+  #             inclination,robs,ra,dec,                              # Observer parameters
+  #             mbh, sbh,                                             # Black Hole parameters
+  #             nr, rlo, rhi, mdot, alpha,                            # Accretion disk parameters
+  #             xclp, yclp, zcl, rhoindex, logrhoscale, logrho0, vcl, # Absorber parameters
+  #             anum,ion,trandx,                                      # Atomic physics parameters
+  #             plot_code,vlo,vhi,vres,nproc,                         # Spectral synthesis parameters
+  #             wind = True, abscloud = True,                         # Optional program flow
+  #             minlox=8.5,                                           # Optional atomic physics parameters
+  #             dtheta_fac = 2.0,                                     # Optional accretion disk parameters
+  #             absfile = "Clouds.fits"                               # Optional absorber parameters
+  #             ):
+  def __init__(self,mypars):
+    self.verbose     = mypars.verbose
+    self.datapath    = mypars.datapath
+    self.cloudypath  = mypars.cloudypath
+    self.zqso        = mypars.zqso
+    self.inclination = mypars.inclination
+    self.robs        = mypars.robs
+    self.ra          = mypars.ra
+    self.dec         = mypars.dec
+    self.mbh         = mypars.mbh
+    self.sbh         = mypars.sbh
+    self.nr          = mypars.nr
+    self.rlo         = mypars.rlo
+    self.rhi         = mypars.rhi
+    self.mdot        = mypars.mdot
+    self.alpha       = mypars.alpha
+    self.xclp        = mypars.xclp
+    self.yclp        = mypars.yclp
+    self.zcl         = mypars.zcl
+    self.rhoindex    = mypars.rhoindex
+    self.logrhoscale = mypars.logrhoscale
+    self.logrho0     = mypars.logrho0
+    self.vcl         = mypars.vcl
+
     ###############################################################################
     self.pltcount = 0
-    self.nproc    = nproc
+    self.nproc    = mypars.nproc
+
     ###############################################################################
     print("#" * 50)
     print("Grabbing atomic data")
-    self.myatoms = atomic(datapath,900 * u.Angstrom,3000 * u.Angstrom,minlox=minlox)
+    self.myatoms = atomic(mypars.datapath,900 * u.Angstrom,3000 * u.Angstrom,minlox=mypars.minlox)
 
-    self.datapath    = datapath
-    self.cloudypath  = cloudypath
-    self.anum        = anum
-    self.ion         = ion
-    self.trandx      = trandx
-    self.plot_code   = plot_code
+    self.datapath    = mypars.datapath
+    self.cloudypath  = mypars.cloudypath
+    self.anum        = mypars.anum
+    self.ion         = mypars.ion
+    self.trandx      = mypars.trandx
+    self.plot_code   = mypars.plot_code
 
-    self.vres       = vres
-    self.velocity   = np.linspace(vlo,vhi,num=np.int16((vhi-vlo)/vres))
-    #self.wavelength = np.empty((self.anum.size,self.velocity.size)) * u.Angstrom
-    #for i in range(self.anum.size):
-    #  self.wavelength[i,:] = np.squeeze(calcwave(self.velocity,
-    #                                             self.myatoms.wave[self.myatoms.getspecies(self.anum[i],self.ion[i])[self.trandx[i]]]
-    #                                             )
-    #                                    ) * u.Angstrom
+    self.vres       = mypars.vres
+    self.velocity   = np.linspace(mypars.vlo,mypars.vhi,num=np.int16((mypars.vhi-mypars.vlo)/mypars.vres))
 
     fu = (u.erg / (u.s * u.cm * u.cm * u.Hz))
     ###############################################################################
     print("Setting observer")
-    self.zqso        = zqso
-    self.inclination = inclination
-    self.skycoord    = SkyCoord(ra=ra,dec=dec)
+    self.zqso        = mypars.zqso
+    self.inclination = mypars.inclination
+    self.skycoord    = SkyCoord(ra=mypars.ra,dec=mypars.dec)
 
     ###############################################################################
     print("Initializing disk")
-    self.mydisk = ntdisk(sbh, mbh,
-                         mdot, alpha,
-                         inclination, robs,
-                         nr, rlo, rhi,
+    self.mydisk = ntdisk(mypars.sbh, mypars.mbh,
+                         mypars.mdot, mypars.alpha,
+                         mypars.inclination, mypars.robs,
+                         mypars.nr, mypars.rlo, mypars.rhi,
                          self.datapath,
-                         dtheta_fac = dtheta_fac)
+                         dtheta_fac = mypars.dtheta_fac)
     comove_dist = LambdaCDM(H0=70, Om0=0.3, Ode0=0.7).comoving_distance(self.zqso)
     self.robs =  (comove_dist * np.sin(self.inclination) / self.mydisk.rg).decompose()
     self.zobs = self.robs / np.tan(self.inclination)
@@ -181,14 +201,13 @@ class Quasar:
     if abscloud:
       print("Initializing absorbing clouds")
       self.reset_observer()
-      self.cloud_filename = self.datapath+absfile
+      self.cloud_filename = self.datapath+mypars.abscloudfile
       print(f"\tLooking for {self.cloud_filename}")
       if os.path.exists(self.cloud_filename):
         print(f"\t\tFound it!")
         self.clouds = self.read_clouds()
       else:
-        self.clouds = self.makeclouds(xclp, yclp, zcl, rhoindex, logrhoscale, logrho0, vcl, verbose = verbose)
-      #self.setgeometry(self.clouds)
+        self.clouds = None
       self.bestfit = None
     else:
       self.clouds = None
@@ -202,11 +221,11 @@ class Quasar:
     for cld in clouds:
       abs_lower_bounds.append(                               -self.mydisk.rstar[-1] ) # xcl
       abs_lower_bounds.append(                               -self.mydisk.rstar[-1] ) # ycl
-      abs_lower_bounds.append(10.0**(1.5 + cld.logrhoscale) * u.cm / self.mydisk.rg )  # zcl
+      abs_lower_bounds.append(10.0**(1.5 + cld.logrhoscale) * u.cm / self.mydisk.rg ) # zcl
       abs_lower_bounds.append(                                                  0.0 ) # rhoindex
       abs_lower_bounds.append(                                cld.logrhoscale - 3.0 ) # logrhoscale
       abs_lower_bounds.append(                                    cld.logrho0 - 4.0 ) # logrho0
-      abs_lower_bounds.append(    (cld.vlos - 100.0 * (u.km/u.s)).to(u.km/u.s).value ) # vlos
+      abs_lower_bounds.append(   (cld.vlos - 100.0 * (u.km/u.s)).to(u.km/u.s).value ) # vlos
 
       abs_upper_bounds.append(                             self.mydisk.rstar[-1] ) # xcl
       abs_upper_bounds.append(                             self.mydisk.rstar[-1] ) # ycl
@@ -214,7 +233,7 @@ class Quasar:
       abs_upper_bounds.append(                                               5.0 ) # rhoindex
       abs_upper_bounds.append(                             cld.logrhoscale + 1.5 ) # logrhoscale
       abs_upper_bounds.append(                                 cld.logrho0 + 4.0 ) # logrho0
-      abs_upper_bounds.append( (cld.vlos + 100.0 * (u.km/u.s)).to(u.km/u.s).value ) # vlos
+      abs_upper_bounds.append((cld.vlos + 100.0 * (u.km/u.s)).to(u.km/u.s).value ) # vlos
 
     return (abs_lower_bounds,abs_upper_bounds)
     
@@ -331,6 +350,7 @@ class Quasar:
     niter = maxiter * x.size
     rng = np.random.default_rng()
     good_direction = False
+    check_negative_direction = False
     while niter > 0 and step_size > minstep:
       self.reset_observer()
       (rcl, zcl, thetacl, logrhoscale, rhoindex, logrho0, vcl) = self.grab_cloud_pars(better_clouds)
@@ -340,12 +360,17 @@ class Quasar:
                                               )
 
       if not good_direction:
-        dx = 2 * rng.uniform(size=x.shape) - 1.0
-        dx /= np.sqrt(np.sum(dx*dx))
+        if not check_negative_direction:
+          dx = 2 * rng.uniform(size=x.shape) - 1.0
+          dx /= np.sqrt(np.sum(dx*dx))
+          check_negative_direction = True
+        else:
+          dx = -dx
+          check_negative_direction = False
 
       # Change the parameters
       print("\t"+"-"*20)
-      print(f"\tProposing changes to clouds (step size = {step_size})...")
+      print(f"\tProposing changes to clouds (step size = {step_size}, good_direction = {good_direction}, check_negative_direction = {check_negative_direction})...")
       maxrad = self.mydisk.rstar[-1] + 10.0**logrhoscale * u.cm / self.mydisk.rg
 
       pos_step = 1.0
@@ -723,7 +748,7 @@ class Quasar:
                                 )
 
       if verbose:
-        print(f"\t\tIntegrating across disk...({tm.time()-t0})")
+        print(f"\t\tIntegrating across disk with {nproc} processors...({tm.time()-t0})")
 
       min_impact_parameters_all_sightlines = None
       if nproc > 1:
@@ -1380,7 +1405,11 @@ class Quasar:
                nsigma = 1.1
                ):
 
-    self.mydata = hstqso(self.skycoord,qfileroot,self.zqso,redospline=redospline)
+    self.mydata = hstqso(self.datapath,
+                         self.skycoord,
+                         qfileroot,
+                         self.zqso,
+                         redospline=redospline)
 
     self.mydata.combspec(verbose=True)
 
