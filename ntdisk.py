@@ -144,16 +144,16 @@ from scipy.special           import gamma
 ######################################################
 class ntdisk:
     ######################################################
-    def __init__(self, sbh, mbh, mdot, alpha, inclination, robs, nr, rlo, rhi, datapath, dtheta_fac = 2.0):
+    def __init__(self, sbh, mbh, mdot, alpha, inclination, nr, rlo, rhi, datapath, dtheta_fac = 2.0):
         self.sbh         = sbh
-        self.mbh         = mbh  * const.M_sun.cgs
-        self.mdot        = mdot * const.M_sun.cgs / u.year
+        self.mbh         = mbh
+        self.mdot        = mdot
         self.alpha       = alpha
         self.inclination = inclination
-        self.robs        = robs
-        self.zobs        = robs / np.tan(self.inclination)
+        self.robs        = None
+        self.zobs        = None
         self.thetaobs    = 0.0 * u.rad
-        self.rg          = const.G.cgs * self.mbh / (const.c.cgs * const.c.cgs)
+        self.rg          = (const.G.cgs * self.mbh / (const.c.cgs * const.c.cgs)).to(u.cm)
         self.nr          = nr
         self.rlo         = rlo
         self.rhi         = rhi
@@ -312,142 +312,10 @@ class ntdisk:
         return fluxrt
 
     ######################################################
-    # robs0 and zobs0 should be in cylindrical coords
-    def fnudisk_gaussleg(self, frequency, robs0, zobs0, degree = 15):
-        x, w = np.polynomial.legendre.leggauss(degree)
-        dx = np.copy(x)
-        x[1:-1] = 0.5 * (x[2:] - x[:-2])
-        dx[0] = dx[1]
-        dx[-1] = dx[-2]
-        # Azimuthal grid
-        phigrid = 2.0 * np.pi * x
-        dphigrid = 2.0 * np.pi * dx
-
-        # Limits on spherical theta from the two extreme end of the disk in the xz-plane where we have placed TheO
-        if robs0 < np.max(self.rstar):
-            costhetamin = 0.0
-        else:
-            costhetamin = zobs0  / np.sqrt(zobs0 * zobs0 + (robs0 - np.max(self.rstar)) * (robs0 - np.max(self.rstar)))
-        costhetamax = zobs0  / np.sqrt(zobs0 * zobs0 + (robs0 + np.max(self.rstar)) * (robs0 + np.max(self.rstar)))
-        costhetagrid = costhetamin + (x+1)/2 * (costhetamax-costhetamin)
-        dcosthetagrid = dx * (costhetamax-costhetamin) / 2
-
-        costheta2Dgrid,  phi2Dgrid = np.meshgrid( costhetagrid, phigrid)
-        dcostheta2Dgrid,dphi2Dgrid = np.meshgrid(dcosthetagrid,dphigrid)
-        wcostheta,wphi             = np.meshgrid(w,            w)
-        wtot = wcostheta*wphi
-        # For each sightline in the Gauss-Legendre sample:
-        # -- Determine n-hat, and whether that sightline intersects the disk photosphere
-        nhat2Dmask, rcvals, tanphid = self._nhatmask(np.sqrt(robs0*robs0 + zobs0*zobs0), np.arctan(robs0/zobs0), costheta2Dgrid, phi2Dgrid)
-
-        phi2Dgrid       = phi2Dgrid[      nhat2Dmask]
-        costheta2Dgrid  = costheta2Dgrid[ nhat2Dmask]
-        dphi2Dgrid      = dphi2Dgrid[     nhat2Dmask]
-        dcostheta2Dgrid = dcostheta2Dgrid[nhat2Dmask]
-        rcvals          = rcvals[         nhat2Dmask]
-        wtot            = wtot[           nhat2Dmask]
-        dOmega2Dgrid    = dcostheta2Dgrid * dphi2Dgrid
-        
-        # R are the vectors from the disk patch to the observer(s) located at (r=self.robs,theta=0 deg,z=self.zobs) [This is the xz plane]
-        # The disk patches are located at cylindrical coords: (r=rcvals,phi=atan(tanphid),z=self.zt1cs(rcvals))
-        # Rx, Ry, Rz, Rr, and Rmag will have shape (ntr,self.robs.size) and in terms of self.rg
-        # Rhat should have shape (ntr,self.robs.size,3) --> change to costheta2D.shape,3
-        self.Rx   = np.broadcast_to(robs0,  phi2Dgrid.shape) - rcvals * np.cos(phi2Dgrid)
-        self.Ry   = np.broadcast_to(    0,  phi2Dgrid.shape) - rcvals * np.sin(phi2Dgrid)
-        self.Rz   = np.broadcast_to(zobs0 , phi2Dgrid.shape) - self.zt1cs(rcvals)
-        self.Rr   = np.sqrt(self.Rx * self.Rx + self.Ry * self.Ry)
-        self.Rmag = np.sqrt(self.Rr * self.Rr + self.Rz * self.Rz)
-
-        # Example from numpy:
-        #   a = np.ones((1, 2, 3))
-        #   np.transpose(a, (1, 0, 2)).shape
-        #   (2, 1, 3)
-        #
-        # [self.Rx,self.Ry,self.Rz] has a shape of .... (3,phi2Dgrid.shape[0],phi2Dgrid.shape[1])
-        # self.Rhat has a shape of .... (phi2Dgrid.shape[0],phi2Dgrid.shape[1],3)
-        #
-        self.Rhat = np.transpose([self.Rx,self.Ry,self.Rz], (1,2,0)) / np.transpose(np.broadcast_to(self.Rmag,(3,phi2Dgrid.shape[0],phi2Dgrid.shape[1])), (1,2,0))
-
-        (gradzx,gradzy,gradzz) = (-self.zt1cs(rcvals,nu=1) * np.cos(phi2Dgrid),
-                                  -self.zt1cs(rcvals,nu=1) * np.sin(phi2Dgrid),
-                                  np.ones(phi2Dgrid.shape))
-        gradzr     = np.sqrt(gradzx*gradzx + gradzy*gradzy)
-        gradzmag   = np.sqrt(gradzr*gradzr + gradzz*gradzz)
-
-        fluxrt  = np.zeros((frequency.size,phi2Dgrid.shape[0],phi2Dgrid.shape[1])) * fu # shape is (frequency.size,phi2Dgrid.shape[0],phi2Dgrid.shape[1]).. duh
-        # shape is (phi2Dgrid.shape[0],phi2Dgrid.shape[1])
-        #self.cosbeta = np.sum(self.Rhat * np.transpose(np.broadcast_to([gradzx,gradzy,gradzz], (self.robs.size,3,ntr)), (2,0,1)), axis=2) / np.transpose(np.broadcast_to(gradzmag, (self.robs.size,ntr))) # shape is (ntr,self.robs.size)
-        self.cosbeta = np.sum(self.Rhat * np.transpose([gradzx,gradzy,gradzz], (1,2,0)), axis=2) / gradzmag # shape is (phi2Dgrid.shape[0],phi2Dgrid.shape[1])
-        # shape should be (phi2Dgrid.shape[0],phi2Dgrid.shape[1])
-        cosbeta_mask = self.cosbeta > 0.0
-
-        rcvals    = rcvals[         cosbeta_mask]
-        phi2Dgrid = phi2Dgrid[      cosbeta_mask]
-        self.Rhat = self.Rhat[np.transpose(np.broadcast_to(cosbeta_mask, (3,cosbetamask.shape[0],cosbetamask.shape[1])), (1,2,0))]
-        self.Rmag = self.Rmag[      cosbeta_mask]
-        wtot      = wtot[           cosbeta_mask]
-        dOmega2Dgrid = dOmega2Dgrid[cosbeta_mask]
-        self.cosbeta = self.cosbeta[cosbeta_mask]
-
-        # Blackbody emitted from the tau=1 surface
-        bb     = BlackBody(temperature=self.tempt1cs(rcvals))
-        # Doppler shift:
-        betamag = np.sqrt(1.0/rcvals) # Rotational motion of disk - in (theta+90 deg)-hat direction; Need dot product with R-hat...
-        # As a vector, beta = -betamag * sin(phi2Dgrid) i-hat + betamag * cos(phi2Dgrid) j-hat
-        betavec = np.transpose([-betamag * np.sin(phi2Dgrid), betamag * np.cos(phi2Dgrid), np.zeros(phi2Dgrid.shape)], (1,2,0)) # betavec had shape (phi2Dgrid.shape[0],phi2Dgrid.shape[1],3)
-
-        betadotrhat = np.sum(betavec * self.Rhat, axis=2) # shape phi2Dgrid.shape
-
-        # Relativistic beaming:
-        gamma    = 1.0/np.sqrt(1- betamag * betamag) # phi2Dgrid.shape
-
-        # Doppler shift
-        freqprime = np.broadcast_to(frequency, (phi2Dgrid.shape[0],phi2Dgrid.shape[1],frequency.size)) * np.transpose(np.broadcast_to((np.sqrt((1 + betadotrhat) / (1 - betadotrhat))), (frequency.size,phi2Dgrid.shape[0],phi2Dgrid.shape[1])), (1,2,0))
-
-        # Blackbody functions
-        bb_eval = np.zeros(freqprime.shape) * (u.erg / (u.Hz * u.s * u.cm**2 * u.sr)) # shape (phi2Dgrid.shape[0],phi2Dgrid.shape[1],frequency.size)
-        bb_mask = const.h * freqprime / (const.k_B * self.tempt1cs(rcvals)) < 670.74 # This is to prevent underflows
-        bb_eval[bb_mask] = bb(freqprime[bb_mask])
-
-        # Relativistic beaming II:
-        costheta_betarhat = betadotrhat / betamag # shape phi2Dgridshape
-        D                 = 1./(gamma * (1. - betamag * costheta_betarhat)) # shape phi2Dgridshape
-
-        # PAUSED REVISIONS HERE
-        fluxrt  = np.transpose(np.broadcast_to((dOmega2Dgrid) * (D**3) * self.cosbeta * wtot, (frequency.size, phi2Dgrid.shape[0],phi2Dgrid.shape[1])), (1,2,0))  * bb_eval * u.sr
-
-        # want to return shape (phi2Dgrid.shape[0],phi2Dgrid.shape[1],frequency.size)
-        #cosbetarm2 = np.transpose(np.broadcast_to(self.cosbeta_betarhat / self.Rmag**2,
-        #                                          (frequency.size,phi2Dgrid.shape[0],phi2Dgrid.shape[1])
-        #                                          ),
-        #                          (1,2,0)
-        #                          )
-
-        t0 = tm.time()
-        for i in np.unique(cbdxo):
-            idx = np.extract(cbdxo == i, cbdxt)
-            freqprime = frequency.reshape(frequency.size,1) @ (np.sqrt((1 + betadotrhat[idx,i]) / (1 - betadotrhat[idx,i]))).reshape(1,idx.size)   # shape (frequency.size,idx.size)
-
-            # Relativistic beaming:
-            costheta = betadotrhat[idx,i] / betamag # shape (idx.size,)
-            D        = 1./(gamma * (1. - betamag * costheta))   # shape (idx.size,)
-
-            # want to return shape (frequency.size,ntr,self.robs.size)
-            cosbetarm2 = np.broadcast_to(self.cosbeta[idx,i] / self.Rmag[idx,i]**2,
-                                         (frequency.size,idx.size))
-
-            bb_eval = np.zeros(freqprime.shape) * (u.erg / (u.Hz * u.s * u.cm**2 * u.sr))
-            bb_mask = const.h * freqprime / (const.k_B * self.tempt1[r]) < 670.74 # This is to prevent underflows
-            bb_eval[bb_mask] = bb(freqprime[bb_mask])
-
-            fluxrt[:,idx,i]  = self.rstar[r] * (self.deltar[r] * dtheta * (D**3) * cosbetarm2 * u.sr) * bb_eval
-        
-        
-    ######################################################
     def makedisk(self):
         mstar    = self.mbh / (3.0 * const.M_sun.cgs)
         mdotstar = (self.mdot / (1.0e+17 * u.g / u.s)).decompose()
-        print(f"\t\tM* = {mstar:e}, Mdot* = {mdotstar:e}  Rg = {self.rg:e}")
+        print(f"\t\tM* = {mstar:e}, Mdot* = {mdotstar:e}  Rg = {self.rg:e}  mstar = {mstar:e}  mdotstar = {mdotstar:e}")
         ######################################################
         y     = np.sqrt(self.rstar)
         ######################################################
@@ -522,26 +390,6 @@ class ntdisk:
         self.x2 = self.rstar[tdx[0]]
         print(f'\t\tPressure change at {round(self.x1)} rg ({self.x1*self.rg})  Optical depth change at {round(self.x2)} rg ({self.x2*self.rg})')
 
-    ######################################################
-    def _nhatfunc(self, rc, myargs):
-        (r0, theta0, theta, phi) = myargs
-        return x*x * np.cos(theta) * np.cos(theta) + (r0 * np.cos(theta0) - self.zt1cs(x)) * (r0 * np.sin(2.0 * theta) * np.cos(phi) - (r0 * np.cos(theta0) - self.zt1cs(x)) * np.sin(theta) * np.sin(theta))
-            
-    def _nhatmask(self, robs, thetaobs, costheta2Dgrid, phi2Dgrid):
-        nhat_mask = np.zeros(costheta2Dgrid.shape, dtype=np.bool)
-        rcvals = -np.ones(costheta2Dgrid.shape)
-        tanphid = np.zeros(costheta2Dgrid.shape)
-        for i in range(costheta2Dgrid.shape[0]):
-            for j in range(costheta2Dgrid.shape[1]):
-                myargs = (robs, thetaobs, np.arccos(costheta2Dgrid[i,j]), phi2Dgrid[i,j])
-                res = root_scalar(self._nhatfunc, args=myargs)
-                nhat_maskp[i,j] = res.converged
-                if res.converged:
-                    rcvals[i,j] = res.root
-                    tanphid[i,j] = - (robs * np.cos(thetaobs) - self.zt1cs(rcvals)) * np.sqrt(1- costheta2Dgrid[i,j] * costheta2Dgrid[i,j]) * np.sin(phi2Dgrid[i,j]) / (robs * np.sin(thetaobs) * costheta2Dgrid[i,j] - (robs * np.cos(thetaobs) - self.zt1cs(rcvals)) * np.sqrt(1- costheta2Dgrid[i,j] * costheta2Dgrid[i,j]) * np.cos(phi2Dgrid[i,j]))
-
-        return nhat_mask,rcvals,tanphid
-        
     ######################################################
     def photosphere(self,makeplot=False):
         self.zt1 = np.empty(0)

@@ -54,9 +54,8 @@ class Quasar:
     self.cloudypath  = mypars.cloudypath
     self.zqso        = mypars.zqso
     self.inclination = mypars.inclination
-    self.robs        = mypars.robs
-    self.ra          = mypars.ra
-    self.dec         = mypars.dec
+    self.ra          = mypars.raqso
+    self.dec         = mypars.decqso
     self.mbh         = mypars.mbh
     self.sbh         = mypars.sbh
     self.nr          = mypars.nr
@@ -64,13 +63,6 @@ class Quasar:
     self.rhi         = mypars.rhi
     self.mdot        = mypars.mdot
     self.alpha       = mypars.alpha
-    self.xclp        = mypars.xclp
-    self.yclp        = mypars.yclp
-    self.zcl         = mypars.zcl
-    self.rhoindex    = mypars.rhoindex
-    self.logrhoscale = mypars.logrhoscale
-    self.logrho0     = mypars.logrho0
-    self.vcl         = mypars.vcl
 
     ###############################################################################
     self.pltcount = 0
@@ -96,19 +88,20 @@ class Quasar:
     print("Setting observer")
     self.zqso        = mypars.zqso
     self.inclination = mypars.inclination
-    self.skycoord    = SkyCoord(ra=mypars.ra,dec=mypars.dec)
+    self.skycoord    = SkyCoord(ra=self.ra,dec=self.dec)
 
     ###############################################################################
-    print("Initializing disk")
-    self.mydisk = ntdisk(mypars.sbh, mypars.mbh,
-                         mypars.mdot, mypars.alpha,
-                         mypars.inclination, mypars.robs,
-                         mypars.nr, mypars.rlo, mypars.rhi,
+    print(f"Initializing disk with {self.nr} annuli from {self.rlo} to {self.rhi} rg")
+    self.mydisk = ntdisk(self.sbh, self.mbh,
+                         self.mdot, self.alpha,
+                         self.inclination,
+                         self.nr, self.rlo, self.rhi,
                          self.datapath,
                          dtheta_fac = mypars.dtheta_fac)
     comove_dist = LambdaCDM(H0=70, Om0=0.3, Ode0=0.7).comoving_distance(self.zqso)
     self.robs =  (comove_dist * np.sin(self.inclination) / self.mydisk.rg).decompose()
     self.zobs = self.robs / np.tan(self.inclination)
+    self.reset_observer()
     
     print("\tCalculating disk")
     self.mydisk.makedisk()
@@ -121,7 +114,7 @@ class Quasar:
     self.mycorona.activate_lamppost()
 
     ###############################################################################
-    if wind:
+    if mypars.calcwind:
       print("Initializing wind...")
       self.mywind = mcgv(self.mydisk, self.mycorona, self.myatoms, 90, self.datapath)
       forcemultfile  = self.datapath+f"Sbh{self.mydisk.sbh}-MBH{np.log10(self.mydisk.mbh / const.M_sun):.2f}"
@@ -198,19 +191,69 @@ class Quasar:
       self.mywind = None
 
     ###############################################################################
-    if abscloud:
+    if mypars.calcabscl:
       print("Initializing absorbing clouds")
       self.reset_observer()
       self.cloud_filename = self.datapath+mypars.abscloudfile
       print(f"\tLooking for {self.cloud_filename}")
       if os.path.exists(self.cloud_filename):
         print(f"\t\tFound it!")
-        self.clouds = self.read_clouds()
+        self.clouds = self._abs_read_clouds()
       else:
         self.clouds = None
       self.bestfit = None
     else:
       self.clouds = None
+
+  #######################################################################################
+  def _abs_all_optical_depth(self,
+                             clouds,           # List of AbsClouds
+                             rdisk_vec, R_vec, # 2D nd.arrays with shapes (3,thetadisk.size)
+                             wavelength        # 1d nd.array
+                             ):
+
+    optical_depth = np.zeros((wavelength.size, rdisk_vec[0,:].size)) # shape = (wavelength.size, thetadisk.size)
+
+    if clouds is not None:
+      rcl, zcl, thetacl, logrhoscale, rhoindex, logrho0, vcl  = self.grab_cloud_pars(clouds)
+      ncl = len(clouds)
+
+      xcl = rcl * np.cos(thetacl)
+      ycl = rcl * np.sin(thetacl)
+
+      Rmag_squared = np.sum(R_vec*R_vec, axis=0)
+
+      min_impact_parameter = 10.0 * self.mydisk.rstar[-1] * self.mydisk.rg / (np.array([np.max(clouds[cdx].radius.to(u.cm).value) for cdx in range(ncl) ]) * u.cm)
+
+      for cdx in range(ncl):
+        rcl_vec = np.broadcast_to(np.array([xcl[cdx],
+                                            ycl[cdx],
+                                            zcl[cdx]
+                                            ]),
+                                  rdisk_vec.T.shape
+                                  ).T
+        R_dot_rclmrdisk = np.sum(R_vec * (rcl_vec - rdisk_vec), axis=0)
+
+        impact_parameter_vec = (R_dot_rclmrdisk/Rmag_squared) * R_vec - rcl_vec + rdisk_vec
+
+        impact_parameter  = np.sqrt(np.sum(impact_parameter_vec * impact_parameter_vec, axis=0)) * self.mydisk.rg
+
+        min_impact_parameter[cdx] = np.min([min_impact_parameter[cdx],
+                                            np.min(impact_parameter)/np.max(clouds[cdx].radius)
+                                            ]
+                                           )
+
+        impact_parameter_mask = impact_parameter < np.max(clouds[cdx].radius)
+        if np.any(impact_parameter_mask):
+          cld_optical_depth = self._abs_optical_depth(impact_parameter, # 1D nd.array with rdisk_vec[0,:].size
+                                                      clouds[cdx],      # AbsCloud
+                                                      wavelength        # 1D nd.array
+                                                      )                 # shape (wavelength.shape + impact_parameter.shape + cloud.radius.shape)
+          optical_depth += cld_optical_depth.sum(axis=-1) # This sums over all radial shells pierced by the sightlines
+    else:
+      min_impact_parameter = None
+
+    return optical_depth, min_impact_parameter
 
   #######################################################################################
   def _abs_bounds(self,
@@ -260,7 +303,7 @@ class Quasar:
     self._abscall_t0 = tm.time() * u.s
 
     # Write out clouds to a file so that we can pick up where we left off...
-    self.write_clouds(clouds)
+    self._abs_write_clouds(clouds)
 
   #######################################################################################
   # Compute the chisq, summing across all max(f-lambda) species that are covered in the velocity range specified
@@ -329,6 +372,7 @@ class Quasar:
                       maxiter = 1000,
                       step_size = 1.0,
                       minstep = 1.0e-5,
+                      dstep = 0.05,
                       verbose = False
                       ):
 
@@ -370,7 +414,7 @@ class Quasar:
 
       # Change the parameters
       print("\t"+"-"*20)
-      print(f"\tProposing changes to clouds (step size = {step_size}, good_direction = {good_direction}, check_negative_direction = {check_negative_direction})...")
+      print(f"\tProposing changes to clouds [step size = {step_size/minstep} x minstep (={minstep}), good_direction = {good_direction}, check_negative_direction = {check_negative_direction}]...")
       maxrad = self.mydisk.rstar[-1] + 10.0**logrhoscale * u.cm / self.mydisk.rg
 
       pos_step = 1.0
@@ -435,14 +479,14 @@ class Quasar:
           niter = maxiter * x.size
 
         good_direction = True
-        step_size *= 1.05
+        step_size *= 1.0 + dstep
 
-        self.write_clouds(better_clouds)
+        self._abs_write_clouds(better_clouds)
         self._abscall_t0 = tm.time() * u.s
       else:
         good_direction = False
         niter -= 1
-        step_size *= 0.95
+        step_size *= 1.0 - dstep
 
         print(f"\n\tKeeping old fit! iterations remaining: {niter}    chisq = {chisq} + {newchisq-chisq}")
 
@@ -450,6 +494,65 @@ class Quasar:
 
     return better_clouds, chisq
                      
+  #######################################################################################
+  def _abs_optical_depth(self,
+                         impact_parameter, # 1D nd.array
+                         cloud,            # AbsCloud
+                         wavelength        # 1D nd.array
+                         ): 
+    optical_depth = np.zeros(wavelength.shape + impact_parameter.shape + cloud.radius.shape)
+
+    tau_const = (2 * np.sqrt(np.pi) * const.e.esu * const.e.esu / (const.m_e * const.c) ).decompose()
+
+    if np.any(impact_parameter < np.max(cloud.radius)):
+
+      ip_ratio = np.outer(impact_parameter,
+                          1 / (cloud.radius + 1 * u.cm)
+                          ) # shape (impact_parameter.size, cloud.radius.size)
+      ip_ratio[ip_ratio > 1] = 1
+      dxarray = np.broadcast_to(cloud.dr.to(u.cm), ip_ratio.shape) * np.sqrt(1 - np.square(ip_ratio ) ) * u.cm  # shape (impact_parameter.size, cloud.radius.size)
+
+      if wavelength.shape == self.wavelength.shape:
+        velocity = self.species_velocity
+      else:
+        velocity = calcvel(wavelength,
+                           self.myatoms.wave
+                           )  # shape (wavelength.size, self.myatoms.wave.size)
+
+      for myatoms_index in range(self.myatoms.anum.size):
+        bvalue = np.sqrt(2 * const.k_B * np.broadcast_to(cloud.temperature.to(u.K),
+                                                         dxarray.shape) * u.K / self.myatoms.amass[myatoms_index]) # shape (impact_parameter.size, cloud.radius.size)
+        dvel = np.outer((velocity[:,myatoms_index] - cloud.vlos),
+                        1 / bvalue
+                        ).decompose().reshape((wavelength.shape)+(bvalue.shape)) # shape (wavelength.shape + impact_parameter.shape + cloud.radius.shape)
+
+        dvel_mask = np.abs(velocity[:,myatoms_index] - cloud.vlos)/np.average(bvalue) < 300.0
+        if np.any(dvel_mask):
+          which_ion_index = (self.myatoms.ions == 100*self.myatoms.anum[myatoms_index]+self.myatoms.ion[myatoms_index])
+        
+          column_density = dxarray * np.broadcast_to(np.squeeze(cloud.iondensity[:,which_ion_index]),
+                                                     dxarray.shape) * (u.cm**-3) # shape (impact_parameter.size, cloud.radius.size)
+          tau0 = (tau_const * self.myatoms.flam[myatoms_index] * column_density / bvalue ).decompose() # shape (impact_parameter.size, cloud.radius.size)
+
+          column_density = np.broadcast_to(column_density.to(u.cm**-2), dvel[dvel_mask,:,:].shape) * (u.cm**-2)
+          bvalue = np.broadcast_to(bvalue.to(u.km/u.s),                 dvel[dvel_mask,:,:].shape) * (u.km/u.s)
+          tau0   = np.broadcast_to(tau0,                                dvel[dvel_mask,:,:].shape)
+
+          if self.myatoms.gamma[myatoms_index].value > 0:
+            a = (self.myatoms.gamma[myatoms_index] * self.myatoms.wave[myatoms_index] / bvalue).decompose()
+            V1   = Voigt1D(x_0         = 0,
+                           amplitude_L = 1/(np.pi * a),
+                           fwhm_L      = 2 * a,
+                           fwhm_G      = 2 * Voigt1D.sqrt_ln2
+                           )
+            optical_depth_species = tau0 * V1(dvel[dvel_mask,:,:])
+          else:
+            optical_depth_species = tau0 * np.exp(-np.square(dvel[dvel_mask,:,:]))
+
+          optical_depth[dvel_mask,:,:] += optical_depth_species
+
+    return optical_depth # shape (wavelength.shape + impact_parameter.shape + cloud.radius.shape)
+
   #######################################################################################
   # Wrapper to take a cloud class and pack the parameters into a 1D array to feed into scipy.optimize.minimize
   def _abs_pack(self,
@@ -549,6 +652,23 @@ class Quasar:
     return xclp, yclp
   
   #######################################################################################
+  def _abs_read_clouds(self):
+    print(f"\tReading clouds from {self.cloud_filename}")
+    cloud_table = Table.read(self.cloud_filename, format="fits")
+    cloud_table.pprint()
+    xclp        = np.array(cloud_table["xclp"])
+    yclp        = np.array(cloud_table["yclp"])
+    zcl         = np.array(cloud_table["zcl"])
+    rhoindex    = np.array(cloud_table["rhoindex"])
+    logrhoscale = np.array(cloud_table["logrhoscale"])
+    logrho0     = np.array(cloud_table["logrho0"])
+    vcl_los     = np.array(cloud_table["vcl"]) * (u.km/u.s)
+
+    clouds = self.makeclouds(xclp, yclp, zcl, rhoindex, logrhoscale, logrho0, vcl_los, verbose = True)
+
+    return clouds
+
+  #######################################################################################
   # Wrapper to take the parameters fed into/from scipy.optimize.minimize and unpack it into a cloud class
   def _abs_unpack(self,
                   x,
@@ -579,6 +699,21 @@ class Quasar:
 
     return clouds
 
+  #######################################################################################
+  def _abs_write_clouds(self,
+                   clouds
+                   ):
+    (rcl, zcl, thetacl, logrhoscale, rhoindex, logrho0, vcl_los) = self.grab_cloud_pars(clouds)
+    xclp, yclp = self._abs_project_clouds(rcl, zcl, thetacl)
+    
+    print(f"\tWriting clouds to {self.cloud_filename}")
+    cloud_table = Table(data=[xclp, yclp, zcl, rhoindex, logrhoscale, logrho0, vcl_los],
+                        names=["xclp","yclp","zcl","rhoindex","logrhoscale","logrho0","vcl"])
+    cloud_table.pprint()
+    cloud_table.write(self.cloud_filename, format="fits", overwrite=True)
+    
+    return
+  
   #######################################################################################
   def _add_to_cheb(self,
                    cloud
@@ -819,115 +954,6 @@ class Quasar:
     return totflux,unabsflux # shape = wavelength.shape
 
   #######################################################################################
-  def _cld_all_optical_depth(self,
-                             clouds,           # List of AbsClouds
-                             rdisk_vec, R_vec, # 2D nd.arrays with shapes (3,thetadisk.size)
-                             wavelength        # 1d nd.array
-                             ):
-
-    optical_depth = np.zeros((wavelength.size, rdisk_vec[0,:].size)) # shape = (wavelength.size, thetadisk.size)
-
-    if clouds is not None:
-      rcl, zcl, thetacl, logrhoscale, rhoindex, logrho0, vcl  = self.grab_cloud_pars(clouds)
-      ncl = len(clouds)
-
-      xcl = rcl * np.cos(thetacl)
-      ycl = rcl * np.sin(thetacl)
-
-      Rmag_squared = np.sum(R_vec*R_vec, axis=0)
-
-      min_impact_parameter = 10.0 * self.mydisk.rstar[-1] * self.mydisk.rg / (np.array([np.max(clouds[cdx].radius.to(u.cm).value) for cdx in range(ncl) ]) * u.cm)
-
-      for cdx in range(ncl):
-        rcl_vec = np.broadcast_to(np.array([xcl[cdx],
-                                            ycl[cdx],
-                                            zcl[cdx]
-                                            ]),
-                                  rdisk_vec.T.shape
-                                  ).T
-        R_dot_rclmrdisk = np.sum(R_vec * (rcl_vec - rdisk_vec), axis=0)
-
-        impact_parameter_vec = (R_dot_rclmrdisk/Rmag_squared) * R_vec - rcl_vec + rdisk_vec
-
-        impact_parameter  = np.sqrt(np.sum(impact_parameter_vec * impact_parameter_vec, axis=0)) * self.mydisk.rg
-
-        min_impact_parameter[cdx] = np.min([min_impact_parameter[cdx],
-                                            np.min(impact_parameter)/np.max(clouds[cdx].radius)
-                                            ]
-                                           )
-
-        impact_parameter_mask = impact_parameter < np.max(clouds[cdx].radius)
-        if np.any(impact_parameter_mask):
-          cld_optical_depth = self._cld_optical_depth(impact_parameter, # 1D nd.array with rdisk_vec[0,:].size
-                                                      clouds[cdx],      # AbsCloud
-                                                      wavelength        # 1D nd.array
-                                                      )                 # shape (wavelength.shape + impact_parameter.shape + cloud.radius.shape)
-          optical_depth += cld_optical_depth.sum(axis=-1) # This sums over all radial shells pierced by the sightlines
-    else:
-      min_impact_parameter = None
-
-    return optical_depth, min_impact_parameter
-
-  #######################################################################################
-  def _cld_optical_depth(self,
-                         impact_parameter, # 1D nd.array
-                         cloud,            # AbsCloud
-                         wavelength        # 1D nd.array
-                         ): 
-    optical_depth = np.zeros(wavelength.shape + impact_parameter.shape + cloud.radius.shape)
-
-    tau_const = (2 * np.sqrt(np.pi) * const.e.esu * const.e.esu / (const.m_e * const.c) ).decompose()
-
-    if np.any(impact_parameter < np.max(cloud.radius)):
-
-      ip_ratio = np.outer(impact_parameter,
-                          1 / (cloud.radius + 1 * u.cm)
-                          ) # shape (impact_parameter.size, cloud.radius.size)
-      ip_ratio[ip_ratio > 1] = 1
-      dxarray = np.broadcast_to(cloud.dr.to(u.cm), ip_ratio.shape) * np.sqrt(1 - np.square(ip_ratio ) ) * u.cm  # shape (impact_parameter.size, cloud.radius.size)
-
-      if wavelength.shape == self.wavelength.shape:
-        velocity = self.species_velocity
-      else:
-        velocity = calcvel(wavelength,
-                           self.myatoms.wave
-                           )  # shape (wavelength.size, self.myatoms.wave.size)
-
-      for myatoms_index in range(self.myatoms.anum.size):
-        bvalue = np.sqrt(2 * const.k_B * np.broadcast_to(cloud.temperature.to(u.K),
-                                                         dxarray.shape) * u.K / self.myatoms.amass[myatoms_index]) # shape (impact_parameter.size, cloud.radius.size)
-        dvel = np.outer((velocity[:,myatoms_index] - cloud.vlos),
-                        1 / bvalue
-                        ).decompose().reshape((wavelength.shape)+(bvalue.shape)) # shape (wavelength.shape + impact_parameter.shape + cloud.radius.shape)
-
-        dvel_mask = np.abs(velocity[:,myatoms_index] - cloud.vlos)/np.average(bvalue) < 300.0
-        if np.any(dvel_mask):
-          which_ion_index = (self.myatoms.ions == 100*self.myatoms.anum[myatoms_index]+self.myatoms.ion[myatoms_index])
-        
-          column_density = dxarray * np.broadcast_to(np.squeeze(cloud.iondensity[:,which_ion_index]),
-                                                     dxarray.shape) * (u.cm**-3) # shape (impact_parameter.size, cloud.radius.size)
-          tau0 = (tau_const * self.myatoms.flam[myatoms_index] * column_density / bvalue ).decompose() # shape (impact_parameter.size, cloud.radius.size)
-
-          column_density = np.broadcast_to(column_density.to(u.cm**-2), dvel[dvel_mask,:,:].shape) * (u.cm**-2)
-          bvalue = np.broadcast_to(bvalue.to(u.km/u.s),                 dvel[dvel_mask,:,:].shape) * (u.km/u.s)
-          tau0   = np.broadcast_to(tau0,                                dvel[dvel_mask,:,:].shape)
-
-          if self.myatoms.gamma[myatoms_index].value > 0:
-            a = (self.myatoms.gamma[myatoms_index] * self.myatoms.wave[myatoms_index] / bvalue).decompose()
-            V1   = Voigt1D(x_0         = 0,
-                           amplitude_L = 1/(np.pi * a),
-                           fwhm_L      = 2 * a,
-                           fwhm_G      = 2 * Voigt1D.sqrt_ln2
-                           )
-            optical_depth_species = tau0 * V1(dvel[dvel_mask,:,:])
-          else:
-            optical_depth_species = tau0 * np.exp(-np.square(dvel[dvel_mask,:,:]))
-
-          optical_depth[dvel_mask,:,:] += optical_depth_species
-
-    return optical_depth # shape (wavelength.shape + impact_parameter.shape + cloud.radius.shape)
-
-  #######################################################################################
   def _flux_sightline(self,
                       rdisk, thetadisk, # Disk parameters. rdisk is scalar, thetadisk is 1D nd.array
                       clouds,           # Clouds parameters (list of AbsClouds)
@@ -989,7 +1015,7 @@ class Quasar:
 
     fluxrtnu *=  (Bnu * u.sr) * gaussleg_w_r * gaussleg_w_theta * (doppler_beam_fac**3) * cosbeta / Rmag**2
 
-    optical_depth, min_impact_parameter = self._cld_all_optical_depth(clouds,           # List of AbsClouds
+    optical_depth, min_impact_parameter = self._abs_all_optical_depth(clouds,           # List of AbsClouds
                                                                       rdisk_vec, R_vec, # 2D nd.arrays with shapes (3,thetadisk.size)
                                                                       wavelength        # 1d nd.array
                                                                       ) # shape = (wavelength.size, thetadisk.size)
@@ -1022,7 +1048,9 @@ class Quasar:
              nproc = 1,
              nr = 300, ntheta = 300,
              maxiter = 100,
-             mcmin = False
+             mcmin = False,
+             minstep = 1.0e-5,
+             dstep = 0.05
              ):
     plt.close('all')
     plt.ion()
@@ -1097,10 +1125,9 @@ class Quasar:
                                  verbose = True,
                                  nr = nr, ntheta = ntheta
                                  )
-        self.write_clouds(clouds)
+        self._abs_write_clouds(clouds)
       else:
         print(f"\t... but not actually adding it...sigh... (would have been {potential_bad_vel})")
-        first_time = False
         clouds = self.clouds
 
       self.reset_observer()
@@ -1114,6 +1141,8 @@ class Quasar:
         mcminimize_clouds, chisq = self._abs_mcminimize(clouds,
                                                         nr = nr, ntheta = ntheta,
                                                         maxiter = maxiter,
+                                                        dstep = dstep,
+                                                        minstep = minstep,
                                                         verbose = True
                                                         )
         x = self._abs_pack(mcminimize_clouds)
@@ -1131,14 +1160,16 @@ class Quasar:
         x = res.x
         
       print(f"Optimized (in {tm.time()-t0} seconds)!  Cleaning up...") 
-      if res.success:
-        print("\tSupposedly, the least-squares fit was successful")
-        chisq = np.sum(self._abs_chisqfunc(res.x, nr = nr, ntheta = ntheta))
-        self.clouds = self._abs_unpack(res.x)
-      elif mcmin:
-        self.clouds = mcminimize_clouds
-      else:
-        print("\tSomething barfed")
+      try:
+        if res.success:
+          print("\tSupposedly, the least-squares fit was successful")
+          chisq = np.sum(self._abs_chisqfunc(res.x, nr = nr, ntheta = ntheta))
+          self.clouds = self._abs_unpack(res.x)
+        else:
+          print("\tSomething barfed")
+      except AttributeError:
+        if mcmin:
+          self.clouds = mcminimize_clouds
       print(f"   Chi^2 = {chisq}")
       # Was adding this cloud a statistically significant improvement in the fit?
       # We need to run F-test
@@ -1158,7 +1189,7 @@ class Quasar:
       if p_value < 0.05 or first_time:
         print("\t\tKEEPING NEW FIT!")
         clouds = self._abs_unpack(x)
-        self.write_clouds(clouds)
+        self._abs_write_clouds(clouds)
         self.reset_observer()
         if not mcmin:
           chisq = np.sum(self._abs_chisq(*self._calculate_absorbed_flux_gaussleg(self.clouds,
@@ -1485,36 +1516,5 @@ class Quasar:
       self.mydisk.robs     = robs
       self.mydisk.thetaobs = thetaobs
       self.mydisk.zobs     = zobs
-
-  #######################################################################################
-  def write_clouds(self,
-                   clouds
-                   ):
-    (rcl, zcl, thetacl, logrhoscale, rhoindex, logrho0, vcl_los) = self.grab_cloud_pars(clouds)
-    xclp, yclp = self._abs_project_clouds(rcl, zcl, thetacl)
-    
-    print(f"\tWriting clouds to {self.cloud_filename}")
-    cloud_table = Table(data=[xclp, yclp, zcl, rhoindex, logrhoscale, logrho0, vcl_los],
-                        names=["xclp","yclp","zcl","rhoindex","logrhoscale","logrho0","vcl"])
-    cloud_table.pprint()
-    cloud_table.write(self.cloud_filename, format="fits", overwrite=True)
-    
-    return
-  
-  def read_clouds(self):
-    print(f"\tReading clouds from {self.cloud_filename}")
-    cloud_table = Table.read(self.cloud_filename, format="fits")
-    cloud_table.pprint()
-    xclp        = np.array(cloud_table["xclp"])
-    yclp        = np.array(cloud_table["yclp"])
-    zcl         = np.array(cloud_table["zcl"])
-    rhoindex    = np.array(cloud_table["rhoindex"])
-    logrhoscale = np.array(cloud_table["logrhoscale"])
-    logrho0     = np.array(cloud_table["logrho0"])
-    vcl_los     = np.array(cloud_table["vcl"]) * (u.km/u.s)
-
-    clouds = self.makeclouds(xclp, yclp, zcl, rhoindex, logrhoscale, logrho0, vcl_los, verbose = True)
-
-    return clouds
   
   #######################################################################################

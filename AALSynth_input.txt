@@ -1,0 +1,54 @@
+############################################
+# Program Flow
+datapath = "/mnt/data/AALSynth_data/"
+cloudypath  = "/mnt/data/c23.01/source/"
+nproc = 20
+verbose = False
+calcabscl = True
+calcwind = False
+############################################
+# Spectral synthesis
+minlox = 9.9
+vlo = -2000.0
+vhi = -1000.0
+vres = 3.0
+anum = np.array([1, 7, 8])
+ion = np.array([1, 5, 6])
+trandx = np.array([0, 0, 1])
+plot_code = ["g", "r", "m"]
+gaussleg_nr = 150
+gaussleg_ntheta = 60
+############################################
+# Black hole parameters
+sbh = 0.01
+mbh = 1.2e+8
+############################################
+# Accretion disk parameters
+mdot = 0.72
+alpha = 0.1
+nr = 300
+rlo = 0.1
+rhi = 1.0e+5
+dtheta_fac = 0.5
+############################################
+# Observer parameters
+zqso = 0.114272
+raqso = 175.19958333333
+decqso = 46.36805555556
+inclination = 20.0
+############################################
+# Absorber parameters
+abscloudfile = "Clouds.fits"
+############################################
+# Data files
+qname = "WISEA J114047"
+qfileroot = "WISEA_J114047"
+redospline = False
+############################################
+# Optimization parameters
+maxchi = 1.5    
+minstep = 0.001
+maxiter = 100
+mcmin = True
+dstep = 0.25
+first_time = True
