@@ -224,6 +224,12 @@ class readpars:
             print(f"abscloudfile not defined in {inputfile}")
             self.abscloudfile = "Clouds.fits"
 
+         try:
+            print(f"Absorbing cloud softenning radius = {self.softenning}")
+         except AttributeError:
+            print(f"softenning not defined in {inputfile}")
+            self.softenning = 0.1
+
          ###########################################################################
          print("Data files:")
          try:

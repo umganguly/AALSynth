@@ -20,8 +20,9 @@ from corona  import corona
 #
 class AbsCloud:
   def __init__(self, basedir, mydisk, mycorona, myatoms,
-               rcl, zcl, thetacl,                       # position of the cloud
+               rcl, zcl, thetacl,                        # position of the cloud
                rhoindex=-2.0, logrhoscale=16, logrho0=2, # density parameters
+               logZ = 0.0,                               # Abundance parameters
                vcl_los=0.0
                ):
     self.basedir     = basedir
@@ -34,6 +35,7 @@ class AbsCloud:
     self.rhoindex    = rhoindex
     self.logrhoscale = logrhoscale
     self.logrho0     = logrho0
+    self.logZ        = logZ
     self.vlos        = vcl_los
     self.cloudyran   = False
 
@@ -87,13 +89,15 @@ class AbsCloud:
   #####################################################################
   def getcloudy(self,
                 cloudypath,
+                softenning = 0.1,
                 verbose = False,
                 runcloudy = False):
     if runcloudy:
       cloud  = cloudy(self.basedir, cloudypath, 1,                 # 0 = emission, 1 = absorption
                       self.myatoms,
                       self.ionspecfreq, self.ionspecflux,            # ionizing spectrum
-                      self.rhoindex, self.logrhoscale, self.logrho0, # density parameters
+                      rhoindex=self.rhoindex, logrhoscale=self.logrhoscale, logrho0=self.logrho0, # density parameters
+                      logZ=self.logZ,
                       zstar = self.zcl,
                       verbose = verbose
                       )
@@ -107,7 +111,7 @@ class AbsCloud:
       self.iondensity  = np.copy(cloud.iondens)    # This should actually be an array of shape (self.depth.size,self.myatoms.nion)
 
     else: 
-      self.depth = np.logspace(0,self.logrhoscale-0.1,num=100) * u.cm
+      self.depth = np.logspace(0,self.logrhoscale-softenning,num=100) * u.cm
       self.radius = np.max(self.depth)-self.depth
 
       self.ddepth = np.zeros_like(self.depth)
@@ -116,7 +120,9 @@ class AbsCloud:
       self.ddepth[-1] = self.ddepth[-2]
 
       # Density - use formula for the globule in Hazy
-      self.density = 10.0**(self.logrho0) * np.power(1 - self.depth.value/(10.0**self.logrhoscale), -self.rhoindex) / u.cm**3
+      norm_depth = 1.0 - self.depth/(10.0**self.logrhoscale * u.cm)
+      norm_depth[norm_depth <= 0] = 1.0 - (10.0**(-softenning))
+      self.density = 10.0**(self.logrho0) * np.power(norm_depth, -self.rhoindex) / u.cm**3
 
       # Temperature - scale with density using the ideal gas law
       self.temperature = (self.density[0] * 1.0e+4 * u.K)  / self.density
@@ -124,6 +130,11 @@ class AbsCloud:
       # Iondensity - Use density, but scaled for the abundance of the element stored in self.myatoms.abund.
       # Shape will be (self.depth.size,self.myatoms.nion)
       self.iondensity = np.zeros((self.depth.size,self.myatoms.nion)) * (u.cm**-3)
+      #for myatoms_index in range(self.myatoms.nion):
+      #  log_relative_abundance = self.myatoms.abund[self.myatoms.idx[myatoms_index]] - 12.0
+      #  if self.myatoms.anum[self.myatoms.idx[myatoms_index]] > 1:
+      #    log_relative_abundance += self.logZ
+      #  self.iondensity[:,myatoms_index] = self.density * (10.0**log_relative_abundance)
 
     self.dr = np.zeros(self.depth.shape) * u.cm
     self.dr[1:-1] = 0.5 * (self.depth[2:] - self.depth[:-2])

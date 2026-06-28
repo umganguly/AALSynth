@@ -12,6 +12,7 @@
 # atomic   -- Clean up, test imports
 # cloudy   -- Clean up, test imports
 #          -- Test for existence of Cloudy_runs/ subdirectory and creation if not there
+#          -- Effect of allowing metalicity to deviate from solar
 # doppler  -- Clean up, test imports
 # hstqso   -- Clean up, test imports
 #          -- Fix datapath
@@ -86,8 +87,10 @@ if mypars.calcabscl:
                                     first_time = mypars.first_time,
                                     nr = mypars.gaussleg_nr, ntheta = mypars.gaussleg_ntheta, 
                                     maxiter = mypars.maxiter, mcmin = mypars.mcmin, minstep = mypars.minstep,
-                                    dstep = mypars.dstep
-                                    )
+                                    dstep = mypars.dstep,
+                                    softenning = mypars.softenning,
+                                    verbose = mypars.verbose
+                                   )
   
   myquasar.printpars()
   myquasar._abs_write_clouds(myquasar.clouds)
