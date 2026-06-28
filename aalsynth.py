@@ -15,6 +15,7 @@
 #          -- Effect of allowing metalicity to deviate from solar
 # doppler  -- Clean up, test imports
 # hstqso   -- Clean up, test imports
+#          -- Fix datapath
 # mcgv     -- Get steady-state velocity field
 #          -- Speed up force multiplier calculation --> use quasar._calculate_absorbed_flux_gaussleg
 #          -- Cloudy simulations for emissivity/source function
@@ -30,8 +31,6 @@
 
 import os
 import sys
-import matplotlib
-matplotlib.use("TkAgg")
 
 import matplotlib.pyplot  as plt
 import numpy              as np
@@ -49,10 +48,14 @@ if len(sys.argv) > 1:
 else:
   inputfile = "AALSynth_input.txt"
 
+inputfile = "AALSynth_input.txt"
+
 print(breakstr)
 print(breakstr)
 print("Welcome to AALSynth. Your one-stop-shop for modelling associated absorbers.")
 print(breakstr)
+
+mypars = readpars(inputfile)
 
 ######################################################
 mypars = readpars(inputfile)
