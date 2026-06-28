@@ -3,7 +3,7 @@
 datapath = "/mnt/data/AALSynth_data/"
 cloudypath  = "/mnt/data/c23.01/source/"
 nproc = 20
-verbose = False
+verbose = True
 calcabscl = True
 calcwind = False
 ############################################
@@ -38,7 +38,8 @@ decqso = 46.36805555556
 inclination = 20.0
 ############################################
 # Absorber parameters
-abscloudfile = "Clouds.fits"
+abscloudfile = "WISEA_J114047_clouds.fits"
+softenning = 0.1
 ############################################
 # Data files
 qname = "WISEA J114047"
@@ -47,7 +48,7 @@ redospline = False
 ############################################
 # Optimization parameters
 maxchi = 1.5    
-minstep = 0.001
+minstep = 0.0001
 maxiter = 100
 mcmin = True
 dstep = 0.25

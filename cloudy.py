@@ -14,6 +14,7 @@ class cloudy:
                myatoms,                                 # instance of atomic class
                ionspecfreq, ionspecflux,                # ionizing spectrum
                rhoindex=0.0, logrhoscale=16, logrho0=2, # density parameters
+               logZ = 0.0,
                contemp = 1.0e+6, rstar = 10.0, zstar = 10.0,
                verbose = False):
 
@@ -33,7 +34,7 @@ class cloudy:
     if Abs_or_Em == 0: # Emission - Has not been developed yet
       rootname = f"EM-hden{logrho0:.2f}-nuFnu{lognuFnu:.2f}-rstar{rstar:.2f}-zstar{zstar:.2f}"
     else: # Absorption
-      rootname = f"ABS-rho0{logrho0}-index{rhoindex}-scale{logrhoscale}-zcl{zstar}"
+      rootname = f"ABS-rho0{logrho0}-index{rhoindex}-scale{logrhoscale}-logZ{logZ}-zcl{zstar}"
       #rootname = f"ABS-rho0{logrho0}-index{rhoindex}-scale{logrhoscale}-nuFnu{lognuFnu}"
       #rootname = f"ABS-rho0{logrho0:.2f}-index{rhoindex:.2f}-scale{logrhoscale:.2f}-nuFnu{lognuFnu:.2f}"
       #rootname = f"ABS"
@@ -66,6 +67,7 @@ class cloudy:
           f.write("print last iteration\n")
           f.write(f"set save prefix \"{rootname}\"\n")
           f.write(f"save overview \".ovr\" last iteration\n")
+          f.write(f"metals {logZ} log\n")
           if self.Abs_or_Em == 0: # Line-emitting gas
             f.write(f"hden {logrho0}\n")
             f.write(f"constant temperature {contemp}\n")
