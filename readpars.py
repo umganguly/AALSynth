@@ -287,7 +287,13 @@ class readpars:
             self.maxiter = 100
 
          try:
-            print(f"First_try = {self.first_time}")
+            print(f"add_clouds = {self.add_clouds}")
          except AttributeError:
-            print(f"First_try not set in {inputfile}")
-            self.first_time = True
+            print(f"Add clouds not set in {inputfile}")
+            self.add_clouds = True
+
+         try:
+            print(f"F_test_prob = {self.F_test_prob}")
+         except AttributeError:
+            print(f"F_test_prob not set in {inputfile}")
+            self.F_test_prob = 0.05

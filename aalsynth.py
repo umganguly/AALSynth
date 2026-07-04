@@ -25,7 +25,6 @@
 # quasar   -- Clean up, test imports
 #          -- Incorporate emission lines into integration of absorbed flux
 #          -- Fitting routine -- parameter uncertainties
-#                             -- improved optimization algorithm
 #                             -- potential for fixed parameters  #FUTURE
 # readpars -- Add wind parameters?
 
@@ -55,27 +54,11 @@ print(breakstr)
 print("Welcome to AALSynth. Your one-stop-shop for modelling associated absorbers.")
 print(breakstr)
 
-mypars = readpars(inputfile)
-
 ######################################################
 mypars = readpars(inputfile)
-input("Please review input parameters")
+#input("Please review input parameters")
+######################################################
 myquasar = Quasar(mypars)
-######################################################
-#       xclp                yclp               zcl             rhoindex        logrhoscale          logrho0             vcl        
-#                                                                                                                       km / s      
-#------------------- ------------------- ----------------- ----------------- ------------------ ----------------- ------------------
-#-1.2608004212379456 -0.5108044764797904 98254032.26888487 3.038712942224144 15.523694283161928 4.538712942224145 -1581.946758340586
-#myquasar.clouds = myquasar.makeclouds(np.array([-1.2608004212379456]), 
-#                                      np.array([-0.5108044764797904]), 
-#                                      np.array([98254032.26888487]),
-#                                      np.array([3.038712942224144]), 
-#                                      np.array([15.523694283161928]), 
-#                                      np.array([4.538712942224145]),
-#                                      np.array([-1581.946758340586]) * (u.km/u.s)
-#                                      )
-#myquasar.write_clouds(myquasar.clouds)
-
 ######################################################
 if mypars.calcabscl:
   print(breakstr)
@@ -84,11 +67,13 @@ if mypars.calcabscl:
   myquasar._build_modwave(wres = mypars.vres * np.average(myquasar.mydata.new_w) / const.c.to(u.km/u.s))
   print(breakstr)
   myquasar.clouds = myquasar.fitabs(mypars.maxchi,
-                                    first_time = mypars.first_time,
+                                    nproc = mypars.nproc,
+                                    add_clouds = mypars.add_clouds,
                                     nr = mypars.gaussleg_nr, ntheta = mypars.gaussleg_ntheta, 
                                     maxiter = mypars.maxiter, mcmin = mypars.mcmin, minstep = mypars.minstep,
                                     dstep = mypars.dstep,
                                     softenning = mypars.softenning,
+                                    F_test_prob = mypars.F_test_prob,
                                     verbose = mypars.verbose
                                    )
   

@@ -71,7 +71,7 @@ class AbsCloud:
         self.mydisk.robs = self.rcl
         self.mydisk.zobs = self.zcl
         fracerr = np.inf
-        for r in tqdm(range(self.mydisk.rstar.size), desc=f"\t\t\tIntegrating disk:", ncols=0):
+        for r in tqdm(range(self.mydisk.rstar.size), desc=f"\t\t\tIntegrating disk", ncols=0):
           oldspec = np.where(self.ionspecflux < 1.0e-100 * fu, 1.0e-100 * fu, self.ionspecflux)
 
           fluxdiskannulusdivided = self.mydisk.fnudiskannulus(self.ionspecfreq,r)
@@ -85,6 +85,11 @@ class AbsCloud:
         corona_flux = np.squeeze(self.mycorona.fnu_lamppost(self.ionspecfreq, self.rcl, self.zcl))
         self.ionspecflux += corona_flux
         self.ionspecflux = np.where(self.ionspecflux < 1.0e-100 * fu, 1.0e-100 * fu, self.ionspecflux)
+
+    self.ionspecdfreq       = np.copy(self.ionspecfreq)
+    self.ionspecdfreq[1:-1] = 0.5 * (self.ionspecfreq[2:] - self.ionspecfreq[:-2])
+    self.ionspecdfreq[ 0]   = self.ionspecdfreq[ 1]
+    self.ionspecdfreq[-1]   = self.ionspecdfreq[-2]
 
   #####################################################################
   def getcloudy(self,
@@ -124,11 +129,13 @@ class AbsCloud:
       norm_depth[norm_depth <= 0] = 1.0 - (10.0**(-softenning))
       self.density = 10.0**(self.logrho0) * np.power(norm_depth, -self.rhoindex) / u.cm**3
 
-      # Temperature - scale with density using the ideal gas law
-      self.temperature = (self.density[0] * 1.0e+4 * u.K)  / self.density
+      # Temperature - scale with density using the ideal gas law, assuming gas pressure balance
+      #surfflux = np.sum(self.ionspecflux * self.ionspecdfreq)
+      #surftemp = np.power(surfflux / const.sigma_sb, 0.25).decompose()
+      surftemp = (1.4e+6 * u.K) * np.sqrt(1.54e+8 / self.zcl)
+      self.temperature = (self.density[0] * surftemp)  / self.density
 
-      # Iondensity - Use density, but scaled for the abundance of the element stored in self.myatoms.abund.
-      # Shape will be (self.depth.size,self.myatoms.nion)
+      # Iondensity - Shape will be (self.depth.size,self.myatoms.nion)
       self.iondensity = np.zeros((self.depth.size,self.myatoms.nion)) * (u.cm**-3)
       #for myatoms_index in range(self.myatoms.nion):
       #  log_relative_abundance = self.myatoms.abund[self.myatoms.idx[myatoms_index]] - 12.0
@@ -136,10 +143,10 @@ class AbsCloud:
       #    log_relative_abundance += self.logZ
       #  self.iondensity[:,myatoms_index] = self.density * (10.0**log_relative_abundance)
 
-    self.dr = np.zeros(self.depth.shape) * u.cm
+    self.dr       = np.zeros(self.depth.shape) * u.cm
     self.dr[1:-1] = 0.5 * (self.depth[2:] - self.depth[:-2])
-    self.dr[0] = self.dr[1]
-    self.dr[-1] = self.dr[-2]
+    self.dr[ 0]   = self.dr[ 1]
+    self.dr[-1]   = self.dr[-2]
 
 
   #####################################################################

@@ -1,29 +1,24 @@
 import copy
 import os
 import matplotlib
-
-import matplotlib.patches as pth
 import matplotlib.pyplot  as plt
 import numpy              as np
 import time               as tm
 
 from astropy                 import constants as const
-from astropy                 import units as u
+from astropy                 import units     as u
 from astropy.units           import Quantity
-from astropy.convolution     import convolve, Gaussian1DKernel
 from astropy.coordinates     import SkyCoord
 from astropy.cosmology       import LambdaCDM
-from astropy.io              import ascii
 from astropy.modeling.models import BlackBody
-from astropy.modeling.functional_models import Voigt1D
 from astropy.table           import Table
-from astropy.visualization   import astropy_mpl_style, quantity_support
-from functools               import partial
 from multiprocessing         import Pool
 from numpy.polynomial        import chebyshev
-from scipy.interpolate       import CubicSpline, interp1d
-from scipy.optimize          import minimize, least_squares
-from scipy.stats             import f as Ftest
+from scipy.interpolate       import CubicSpline
+from scipy.optimize          import least_squares
+from scipy.special           import wofz
+from scipy.stats             import f         as Ftest
+from tqdm                    import tqdm
 
 from AbsCloud                import AbsCloud
 from atomic                  import atomic
@@ -33,21 +28,8 @@ from hstqso                  import hstqso
 from mcgv                    import mcgv
 from ntdisk                  import ntdisk
 from readpars                import readpars
-from tqdm                    import tqdm
 
 class Quasar:
-  #def __init__(self,verbose,datapath,cloudypath,zqso,                # Program flow
-  #             inclination,robs,ra,dec,                              # Observer parameters
-  #             mbh, sbh,                                             # Black Hole parameters
-  #             nr, rlo, rhi, mdot, alpha,                            # Accretion disk parameters
-  #             xclp, yclp, zcl, rhoindex, logrhoscale, logrho0, vcl, # Absorber parameters
-  #             anum,ion,trandx,                                      # Atomic physics parameters
-  #             plot_code,vlo,vhi,vres,nproc,                         # Spectral synthesis parameters
-  #             wind = True, abscloud = True,                         # Optional program flow
-  #             minlox=8.5,                                           # Optional atomic physics parameters
-  #             dtheta_fac = 2.0,                                     # Optional accretion disk parameters
-  #             absfile = "Clouds.fits"                               # Optional absorber parameters
-  #             ):
   def __init__(self,mypars):
     self.verbose     = mypars.verbose
     self.datapath    = mypars.datapath
@@ -198,7 +180,10 @@ class Quasar:
       print(f"\tLooking for {self.cloud_filename}")
       if os.path.exists(self.cloud_filename):
         print(f"\t\tFound it!")
-        self.clouds = self._abs_read_clouds(softenning = mypars.softenning)
+        self.clouds = self._abs_read_clouds(nr = mypars.gaussleg_nr,
+                                            ntheta = mypars.gaussleg_ntheta,
+                                            softenning = mypars.softenning
+                                            )
       else:
         self.clouds = None
       self.bestfit = None
@@ -226,6 +211,7 @@ class Quasar:
       min_impact_parameter = 10.0 * self.mydisk.rstar[-1] * self.mydisk.rg / (np.array([np.max(clouds[cdx].radius.to(u.cm).value) for cdx in range(ncl) ]) * u.cm)
 
       for cdx in range(ncl):
+        t0 = tm.time()
         rcl_vec = np.broadcast_to(np.array([xcl[cdx],
                                             ycl[cdx],
                                             zcl[cdx]
@@ -242,6 +228,11 @@ class Quasar:
                                             np.min(impact_parameter)/np.max(clouds[cdx].radius)
                                             ]
                                            )
+        
+        try:
+          self.optical_depth_geometry_time += tm.time() - t0
+        except AttributeError:
+          self.optical_depth_geometry_time = tm.time() - t0
 
         impact_parameter_mask = impact_parameter < np.max(clouds[cdx].radius)
         if np.any(impact_parameter_mask):
@@ -249,6 +240,7 @@ class Quasar:
                                                       clouds[cdx],      # AbsCloud
                                                       wavelength        # 1D nd.array
                                                       )                 # shape (wavelength.shape + impact_parameter.shape + cloud.radius.shape)
+
           optical_depth += cld_optical_depth.sum(axis=-1) # This sums over all radial shells pierced by the sightlines
     else:
       min_impact_parameter = None
@@ -297,10 +289,10 @@ class Quasar:
     self.print_clouds(clouds, ntabs=2)
     try:
       print(f"\t\tChi^2 = {chisq}  ({tm.time() * u.s - self._abscall_t0:e} since last callback)")
-      self._abs_plot(totflux, unabsflux, 0, 0, self._abscall_t0)
+      self._abs_plot(totflux, unabsflux, vcl = self.grab_cloud_pars(clouds)[-1])
     except NameError:
       print(f"\t\tChi^2 = {chisq}")
-      self._abs_plot(totflux, unabsflux, 0, 0, 0 * u.s)
+      self._abs_plot(totflux, unabsflux, vcl = self.grab_cloud_pars(clouds)[-1])
 
     self._abscall_t0 = tm.time() * u.s
 
@@ -451,6 +443,8 @@ class Quasar:
                                          rhoindex, logrhoscale, logrho0,
                                          logZ,
                                          vcl,
+                                         nr = nr,
+                                         ntheta = ntheta,
                                          verbose = verbose,
                                          softenning=softenning
                                          )
@@ -501,8 +495,9 @@ class Quasar:
       self.print_clouds(better_clouds, ntabs=2)
 
     return better_clouds, chisq
-                     
+
   #######################################################################################
+  # Absorption optical depth from sightlines (at impact_parameter) piercing one cloud
   def _abs_optical_depth(self,
                          impact_parameter, # 1D nd.array
                          cloud,            # AbsCloud
@@ -510,15 +505,13 @@ class Quasar:
                          ): 
     optical_depth = np.zeros(wavelength.shape + impact_parameter.shape + cloud.radius.shape)
 
-    tau_const = (2 * np.sqrt(np.pi) * const.e.esu * const.e.esu / (const.m_e * const.c) ).decompose()
-
     if np.any(impact_parameter < np.max(cloud.radius)):
 
       ip_ratio = np.outer(impact_parameter,
                           1 / (cloud.radius + 1 * u.cm)
                           ) # shape (impact_parameter.size, cloud.radius.size)
-      ip_ratio[ip_ratio > 1] = 1
-      dxarray = np.broadcast_to(cloud.dr.to(u.cm), ip_ratio.shape) * np.sqrt(1 - np.square(ip_ratio ) ) * u.cm  # shape (impact_parameter.size, cloud.radius.size)
+      ip_ratio[ip_ratio > 1] = 1 # This ensures that dx=0 when the impact parameter is outside the cloud
+      dxarray = cloud.dr[None,:].to(u.cm) * np.sqrt(1 - np.square(ip_ratio ) ) # shape (impact_parameter.size, cloud.radius.size)
 
       if wavelength.shape == self.wavelength.shape:
         velocity = self.species_velocity
@@ -527,39 +520,80 @@ class Quasar:
                            self.myatoms.wave
                            )  # shape (wavelength.size, self.myatoms.wave.size)
 
+      # Parallel processing all of the absorbing species
+      t0 = tm.time()
+      pool_tuple_input = []
       for myatoms_index in range(self.myatoms.anum.size):
-        bvalue = np.sqrt(2 * const.k_B * np.broadcast_to(cloud.temperature.to(u.K),
-                                                         dxarray.shape) * u.K / self.myatoms.amass[myatoms_index]) # shape (impact_parameter.size, cloud.radius.size)
-        dvel = np.outer((velocity[:,myatoms_index] - cloud.vlos),
-                        1 / bvalue
-                        ).decompose().reshape((wavelength.shape)+(bvalue.shape)) # shape (wavelength.shape + impact_parameter.shape + cloud.radius.shape)
+        pool_tuple_input.append([cloud.temperature,dxarray,myatoms_index,cloud.vlos,velocity,cloud.iondensity])
+      try:
+        self.optical_depth_pool_fill_time += tm.time() - t0
+      except AttributeError:
+        self.optical_depth_pool_fill_time = tm.time() - t0
 
-        dvel_mask = np.abs(velocity[:,myatoms_index] - cloud.vlos)/np.average(bvalue) < 300.0
-        if np.any(dvel_mask):
-          which_ion_index = (self.myatoms.ions == 100*self.myatoms.anum[myatoms_index]+self.myatoms.ion[myatoms_index])
-        
-          column_density = dxarray * np.broadcast_to(np.squeeze(cloud.iondensity[:,which_ion_index]),
-                                                     dxarray.shape) * (u.cm**-3) # shape (impact_parameter.size, cloud.radius.size)
-          tau0 = (tau_const * self.myatoms.flam[myatoms_index] * column_density / bvalue ).decompose() # shape (impact_parameter.size, cloud.radius.size)
-
-          column_density = np.broadcast_to(column_density.to(u.cm**-2), dvel[dvel_mask,:,:].shape) * (u.cm**-2)
-          bvalue = np.broadcast_to(bvalue.to(u.km/u.s),                 dvel[dvel_mask,:,:].shape) * (u.km/u.s)
-          tau0   = np.broadcast_to(tau0,                                dvel[dvel_mask,:,:].shape)
-
-          if self.myatoms.gamma[myatoms_index].value > 0:
-            a = (self.myatoms.gamma[myatoms_index] * self.myatoms.wave[myatoms_index] / bvalue).decompose()
-            V1   = Voigt1D(x_0         = 0,
-                           amplitude_L = 1/(np.pi * a),
-                           fwhm_L      = 2 * a,
-                           fwhm_G      = 2 * Voigt1D.sqrt_ln2
-                           )
-            optical_depth_species = tau0 * V1(dvel[dvel_mask,:,:])
-          else:
-            optical_depth_species = tau0 * np.exp(-np.square(dvel[dvel_mask,:,:]))
-
+      istart = 0
+      iend   = 0
+      while iend < len(pool_tuple_input)+self.nproc:
+        iend = np.min([istart+self.nproc,len(pool_tuple_input)])
+        with Pool(self.nproc) as pool:
+          optical_depth_output_tuple = pool.starmap(self._abs_optical_depth_single_species, pool_tuple_input[istart:iend])
+        for (optical_depth_species, dvel_mask, optical_depth_bv_fill_time, optical_depth_Ntau0_fill_time, optical_depth_voigt_calc_time) in optical_depth_output_tuple:
           optical_depth[dvel_mask,:,:] += optical_depth_species
+          try:
+            self.optical_depth_bv_fill_time    += optical_depth_bv_fill_time     / (iend-istart)
+            self.optical_depth_Ntau0_fill_time += optical_depth_Ntau0_fill_time  / (iend-istart)
+            self.optical_depth_voigt_calc_time += optical_depth_voigt_calc_time  / (iend-istart)
+          except AttributeError:
+            self.optical_depth_bv_fill_time    = optical_depth_bv_fill_time     / (iend-istart)
+            self.optical_depth_Ntau0_fill_time = optical_depth_Ntau0_fill_time  / (iend-istart)
+            self.optical_depth_voigt_calc_time = optical_depth_voigt_calc_time  / (iend-istart)
+        istart = iend
+        iend = istart+self.nproc
 
-    return optical_depth # shape (wavelength.shape + impact_parameter.shape + cloud.radius.shape)
+    return optical_depth # shape (wavelength.size, impact_parameter.size, cloud.radius.size)
+
+  #######################################################################################
+  # Absorption optical depth by a single species from one sightline (at impact_parameter --> dxarray) piercing one cloud (vlos, iondiensity, temperature)
+  def _abs_optical_depth_single_species(self,
+                                        temperature,
+                                        dxarray,
+                                        myatoms_index,
+                                        vlos,
+                                        velocity,
+                                        iondensity
+                                        ):
+    tau_const = (2 * np.sqrt(np.pi) * const.e.esu * const.e.esu / (const.m_e * const.c) ).decompose()
+
+    t0 = tm.time()
+    bvalue = np.sqrt(2 * const.k_B * temperature.to(u.K) / self.myatoms.amass[myatoms_index]) # shape (cloud.radius.size,)
+
+    dvel = np.outer((velocity[:,myatoms_index] - vlos), # shape (velocity[:,myatoms_index].size,)
+                     1 / bvalue                         # shape (cloud.radius.size,)
+                    ).decompose()                       # shape (velocity[:,myatoms_index].size, cloud.radius.size)
+    optical_depth_bv_fill_time = tm.time() - t0
+
+    dvel_mask = np.abs(velocity[:,myatoms_index] - vlos)/np.average(bvalue) < 300.0
+    if np.any(dvel_mask):
+      which_ion_index = (self.myatoms.ions == 100*self.myatoms.anum[myatoms_index]+self.myatoms.ion[myatoms_index])
+
+      t0 = tm.time()
+      column_density = dxarray * np.squeeze(iondensity[:,which_ion_index])[None,:]                         # shape (impact_parameter.size, cloud.radius.size)
+      tau0 = (tau_const * self.myatoms.flam[myatoms_index] * column_density / bvalue[None,:] ).decompose() # shape (impact_parameter.size, cloud.radius.size)
+      optical_depth_Ntau0_fill_time = tm.time() - t0
+
+      t0 = tm.time()
+      if self.myatoms.wave[myatoms_index] > 1215.66 * u.Angstrom and self.myatoms.wave[myatoms_index] < 1215.68 * u.Angstrom:  # self.myatoms.gamma[myatoms_index].value > 0:
+        a = (self.myatoms.gamma[myatoms_index] * self.myatoms.wave[myatoms_index] / (4.0 * np.pi * bvalue)).decompose()        # shape (cloud.radius.size,)
+        optical_depth_species = tau0[None,:,:] * wofz(dvel[dvel_mask,None,:] + 1j * a[None,None,:]).real
+      else:
+        optical_depth_species = tau0[None,:,:] * np.exp(-np.square(dvel[dvel_mask,None,:]))
+      optical_depth_voigt_calc_time = tm.time() - t0
+
+    else:
+      optical_depth_species = np.zeros( (np.int16(np.sum(dvel_mask)),) + dxarray.shape) #  dvel[dvel_mask,None,:]*dxarray[None,:,:]
+      optical_depth_Ntau0_fill_time = 0
+      optical_depth_voigt_calc_time = 0
+
+    return optical_depth_species, dvel_mask, optical_depth_bv_fill_time, optical_depth_Ntau0_fill_time, optical_depth_voigt_calc_time
 
   #######################################################################################
   # Wrapper to take a cloud class and pack the parameters into a 1D array to feed into scipy.optimize.minimize
@@ -577,8 +611,6 @@ class Quasar:
   # Make a plot of the normalized absorption spectra (observed and predicted)
   def _abs_plot(self,
                 totflux, unabsflux,
-                ncur, ntot,
-                t0,
                 vcl = np.array([])
                 ):
     plt.clf()
@@ -622,22 +654,38 @@ class Quasar:
 
     plt.legend()
     
-    if ntot > 0:
-      title_str  = f"sightline = {ncur}/{ntot} time: {tm.time()-t0:.3f} "
-    else:
-      title_str = ""
-
-    title_str += r"$\chi^2 = $"
     chisq_spec = self._abs_chisq(totflux, unabsflux)
     chisq = np.sum(chisq_spec)
-    title_str += f"{chisq:.3f}"
-    
-    if ntot > 0:
-      title_str += f"  est: {(tm.time()-t0) * (ntot/(ncur+1.0e-30) - 1):.3f} / {(tm.time()-t0) * (ntot/(ncur+1.0e-30)):.3f}"
+    title_str = r"$\chi^2 = $" + f"{chisq:.3f}"
     try:
-      title_str += f" {tm.time() * u.s - self._abscall_t0:.3f}"
-    except:
-      title_str += f" {tm.time():.3f}"
+      title_str += " " + r"$t_\mathrm{los} = $" + f"{self.sightline_time:.2e}"
+    except AttributeError:
+      pass
+    try:
+      title_str += " " + r"$t_\tau = $" + f"{self.optical_depth_time:.2e}"
+    except AttributeError:
+      pass
+    try:
+      title_str += f" t(geom) = {self.optical_depth_geometry_time:.2e}"
+    except AttributeError:
+      pass
+    try:
+      title_str += f" t(pool_fill) = {self.optical_depth_pool_fill_time:.2e}"
+    except AttributeError:
+      pass
+    try:
+      title_str += f" t(bv_fill) = {self.optical_depth_bv_fill_time:.2e}"
+    except AttributeError:
+      pass
+    try:
+      title_str += f" t(Ntau0_fill) = {self.optical_depth_Ntau0_fill_time:.2e}"
+    except AttributeError:
+      pass
+    try:
+      title_str += f" t(voigt) = {self.optical_depth_voigt_calc_time:.2e}"
+    except AttributeError:
+      pass
+
 
     plt.title(title_str)
     plt.xlim([self.velocity[0].to(u.km/u.s).value, self.velocity[-1].to(u.km/u.s).value])
@@ -661,6 +709,7 @@ class Quasar:
   
   #######################################################################################
   def _abs_read_clouds(self,
+                       nr = 300, ntheta = 300,
                        softenning = 0.1):
     print(f"\tReading clouds from {self.cloud_filename}")
     cloud_table = Table.read(self.cloud_filename, format="fits")
@@ -674,7 +723,20 @@ class Quasar:
     logZ        = np.array(cloud_table["logZ"])
     vcl_los     = np.array(cloud_table["vcl"]) * (u.km/u.s)
 
-    clouds = self.makeclouds(xclp, yclp, zcl, rhoindex, logrhoscale, logrho0, logZ, vcl_los, verbose = True, softenning=softenning)
+    clouds = self.makeclouds(xclp, 
+                             yclp, 
+                             zcl, 
+                             rhoindex, 
+                             logrhoscale, 
+                             logrho0, 
+                             logZ, 
+                             vcl_los, 
+                             verbose = True, 
+                             nr = nr, 
+                             ntheta = ntheta, 
+                             softenning = softenning,
+                             nproc = self.nproc
+                             )
 
     return clouds
 
@@ -683,6 +745,7 @@ class Quasar:
   def _abs_unpack(self,
                   x,
                   softenning = 0.1,
+                  nr = 300, ntheta = 300,
                   verbose = False
                   ):
     if len(x)//8 > 0:
@@ -704,7 +767,7 @@ class Quasar:
         logZ[i]        = x[8*i+6]
         vcl[i]         = x[8*i+7] * (u.km/u.s)
 
-      clouds = self.makeclouds(xclp, yclp, zcl, rhoindex, logrhoscale, logrho0, logZ, vcl, verbose = False, softenning=softenning)
+      clouds = self.makeclouds(xclp, yclp, zcl, rhoindex, logrhoscale, logrho0, logZ, vcl, verbose = False, nr=nr, ntheta=ntheta, softenning=softenning)
       if verbose:
         self.print_clouds(clouds, ntabs=1)
     else:
@@ -878,71 +941,69 @@ class Quasar:
       if os.name == 'nt':
         plt.get_current_fig_manager().window.state("zoomed")
 
+      separate_theta = False
       pool_tuple_input = []
       for rdx in range(nr):
         if lograd:
           rdisk = self.mydisk.rstar[0] * np.power(self.mydisk.rstar[-1]/self.mydisk.rstar[0], (gaussleg_y_r[rdx] + 1)/2) # Units rg (log)
         else:
           rdisk = self.mydisk.rstar[0] + (self.mydisk.rstar[-1] - self.mydisk.rstar[0]) * (gaussleg_y_r[rdx] + 1) / 2 # Units rg (linear)
+        
 
-        thetadisk = np.pi * (gaussleg_y_theta + 1.) # Azimuthal angle
+        if separate_theta:
+          for tdx in range(ntheta):
+            thetadisk = np.array([np.pi * (gaussleg_y_theta[tdx] + 1.)]) # Azimuthal angle
       
-        pool_tuple_input.append((rdisk,
-                                 thetadisk,
-                                 clouds,
-                                 robs_vec,
-                                 gaussleg_y_r[rdx],
-                                 gaussleg_w_r[rdx],
-                                 gaussleg_w_theta,
-                                 wavelength,
-                                 lograd
-                                 )
-                                )
+            pool_tuple_input.append((rdisk,
+                                     thetadisk,
+                                     clouds,
+                                     robs_vec,
+                                     gaussleg_y_r[rdx],
+                                     gaussleg_w_r[rdx],
+                                     gaussleg_w_theta[tdx],
+                                     wavelength,
+                                     lograd
+                                    )
+                                   )
+          dumstr = "sightline"
+        else:
+          thetadisk = np.pi * (gaussleg_y_theta + 1.) # Azimuthal angle
+      
+          pool_tuple_input.append((rdisk,
+                                   thetadisk,
+                                   clouds,
+                                   robs_vec,
+                                   gaussleg_y_r[rdx],
+                                   gaussleg_w_r[rdx],
+                                   gaussleg_w_theta,
+                                   wavelength,
+                                   lograd
+                                   )
+                                  )
+          dumstr = "annulus"
 
       if verbose:
-        print(f"\t\tIntegrating across disk with {nproc} processors...({tm.time()-t0})")
+        print(f"\t\tIntegrating across disk with at most {nproc} processors...({tm.time()-t0})")
 
+      t_last_plot = tm.time()
       min_impact_parameters_all_sightlines = None
-      if nproc > 1:
-        with Pool(nproc) as pool:
-          istart = 0
-          iend = nproc
-          while iend < len(pool_tuple_input):
-            flux_output_tuple = pool.starmap(self._flux_sightline, pool_tuple_input[istart:iend])
-            for (fluxrtnu, optical_depth, min_impact_parameter) in flux_output_tuple:  # fluxrtnu.shape = optical_depth.shape = (wavelength.size, thetadisk.size)
-              totflux += np.sum(fluxrtnu * np.exp(-optical_depth), axis=-1) # Sum over sightlines
-              unabsflux += np.sum(fluxrtnu, axis=-1) # Sum over sightlines
-              if min_impact_parameter is not None:
-                try:
-                  min_impact_parameters_all_sightlines = np.append(min_impact_parameters_all_sightlines, [min_impact_parameter], axis=0)
-                except ValueError:
-                  min_impact_parameters_all_sightlines = np.array([min_impact_parameter])
-            if not noplot:
-              self._abs_plot(totflux, unabsflux,
-                             iend, len(pool_tuple_input), t0,
-                             self.grab_cloud_pars(clouds)[-1] # = vcl
-                             )
-            istart = iend
-            iend = np.min([istart+nproc,len(pool_tuple_input)])
-      else:
-        iend = 0
-        while iend < len(pool_tuple_input):
-          (fluxrtnu, optical_depth, min_impact_parameter) = self._flux_sightline(*pool_tuple_input[iend]) # fluxrtnu.shape = optical_depth.shape = (wavelength.size, thetadisk.size)
-          totflux += np.sum(fluxrtnu * np.exp(-optical_depth), axis=-1) # Sum over sightlines
-          unabsflux += np.sum(fluxrtnu, axis=-1) # Sum over sightlines
-          if min_impact_parameter is not None:
-            try:
-              min_impact_parameters_all_sightlines = np.append(min_impact_parameters_all_sightlines, [min_impact_parameter], axis=0)
-            except ValueError:
-              min_impact_parameters_all_sightlines = np.array([min_impact_parameter])
-          if iend % 10 == 90 and not noplot:
-            self._abs_plot(totflux, unabsflux,
-                           iend, len(pool_tuple_input), t0,
-                           self.grab_cloud_pars(clouds)[-1] # = vcl
-                           )
-          iend += 1
-      if verbose:
-        print(f"\t\tIntegration complete...({tm.time()-t0})\n")
+      for iend in tqdm(range(len(pool_tuple_input)), desc=f"\t\t\tIntegrating {dumstr}", ncols=0):
+        (fluxrtnu, optical_depth, min_impact_parameter) = self._flux_sightline(*pool_tuple_input[iend]) # fluxrtnu.shape = optical_depth.shape = (wavelength.size, thetadisk.size)
+        totflux += np.sum(fluxrtnu * np.exp(-optical_depth), axis=-1) # Sum over sightlines
+        unabsflux += np.sum(fluxrtnu, axis=-1) # Sum over sightlines
+        if min_impact_parameter is not None:
+          try:
+            min_impact_parameters_all_sightlines = np.append(min_impact_parameters_all_sightlines, 
+                                                             [min_impact_parameter], 
+                                                             axis=0)
+          except ValueError:
+            min_impact_parameters_all_sightlines = np.array([min_impact_parameter])
+        #if iend % 10 == 5 and not noplot:
+        if tm.time()-t_last_plot > 30.0 and not noplot:
+          self._abs_plot(totflux, unabsflux,
+                         vcl = self.grab_cloud_pars(clouds)[-1] # = vcl
+                         )
+          t_last_plot = tm.time()
 
       if clouds is not None:
         min_impact_parameters_all_sightlines = np.min(min_impact_parameters_all_sightlines, axis=0)
@@ -980,6 +1041,8 @@ class Quasar:
                       lograd            # boolean for quadrature method
                       ):
     fu = (u.erg / (u.s * u.cm * u.cm * u.Hz))
+
+    t0 = tm.time()
 
     zt1cs = CubicSpline(self.mydisk.rstar, self.mydisk.zt1)
     Tt1cs = CubicSpline(self.mydisk.rstar, self.mydisk.tempt1.to(u.K).value)
@@ -1032,10 +1095,20 @@ class Quasar:
 
     fluxrtnu *=  (Bnu * u.sr) * gaussleg_w_r * gaussleg_w_theta * (doppler_beam_fac**3) * cosbeta / Rmag**2
 
+    try:
+      self.sightline_time += tm.time() - t0
+    except AttributeError:
+      self.sightline_time = tm.time() - t0
+
+    t0 = tm.time()
     optical_depth, min_impact_parameter = self._abs_all_optical_depth(clouds,           # List of AbsClouds
                                                                       rdisk_vec, R_vec, # 2D nd.arrays with shapes (3,thetadisk.size)
                                                                       wavelength        # 1d nd.array
                                                                       ) # shape = (wavelength.size, thetadisk.size)
+    try:
+      self.optical_depth_time += tm.time() - t0
+    except AttributeError:
+      self.optical_depth_time = tm.time() - t0
 
     return fluxrtnu, optical_depth, min_impact_parameter
 
@@ -1061,7 +1134,6 @@ class Quasar:
   #######################################################################################
   def fitabs(self,
              maxchi,
-             first_time = True,
              nproc = 1,
              nr = 300, ntheta = 300,
              maxiter = 100,
@@ -1069,6 +1141,8 @@ class Quasar:
              minstep = 1.0e-5,
              dstep = 0.05,
              softenning=0.1,
+             add_clouds = True,
+             F_test_prob = 0.05,
              verbose = False
              ):
     plt.close('all')
@@ -1084,17 +1158,15 @@ class Quasar:
     # Initial Chisq...
     (totflux,unabsflux) = self._calculate_absorbed_flux_gaussleg(self.clouds,
                                                                  nr = nr, ntheta = ntheta,
-                                                                 nproc = 20, verbose = verbose)
+                                                                 nproc = nproc, verbose = verbose)
     self.bestfit = totflux/unabsflux
-    self._abs_plot(totflux, unabsflux, 0, 0, 0)
+    self._abs_plot(totflux, unabsflux)
     chisq = np.sum(self._abs_chisq(totflux, unabsflux))
     print(f"Initial chisq = {chisq}")
 
     if self.clouds is not None:
       (rcl, zcl, thetacl, logrhoscale, rhoindex, logrho0, logZ, vcl) = self.grab_cloud_pars(self.clouds)
       xclp,yclp = self._abs_project_clouds(rcl, zcl, thetacl)
-    else:
-      first_time = False
 
     list_of_bad_velocities = np.array([]) * (u.km/u.s)
     res = None
@@ -1112,7 +1184,7 @@ class Quasar:
 
       potential_bad_vel = np.extract(tot_chisq_spec == np.max(tot_chisq_spec), self.velocity)[0]
 
-      if not first_time:
+      if add_clouds:
         print(f"\t... and adding it at {potential_bad_vel} with badness {np.max(tot_chisq_spec)}")
         try:
           xclp        = np.append(                  xclp,                                  0.0)
@@ -1161,12 +1233,13 @@ class Quasar:
       t0 = tm.time()
       if mcmin:
         mcminimize_clouds, chisq = self._abs_mcminimize(clouds,
-                                                        nr = nr, ntheta = ntheta,
-                                                        maxiter = maxiter,
-                                                        dstep = dstep,
-                                                        minstep = minstep,
-                                                        softenning=softenning,
-                                                        verbose = verbose
+                                                        nr         = nr, 
+                                                        ntheta     = ntheta,
+                                                        maxiter    = maxiter,
+                                                        dstep      = dstep,
+                                                        minstep    = minstep,
+                                                        softenning = softenning,
+                                                        verbose    = verbose
                                                         )
         x = self._abs_pack(mcminimize_clouds)
       else:
@@ -1209,7 +1282,7 @@ class Quasar:
 
       p_value = Ftest.sf(F_stat, dof, old_dof)
       print(f"\tF-stat = {F_stat} --> probablility that the new and old fits are statistically consistent {p_value}")
-      if p_value < 0.05 or first_time:
+      if p_value < F_test_prob or not add_clouds:
         print("\t\tKEEPING NEW FIT!")
         clouds = self._abs_unpack(x, softenning=softenning)
         self._abs_write_clouds(clouds)
@@ -1221,7 +1294,6 @@ class Quasar:
                                                                                  )
                                          )
                          )
-        first_time = False
       else:
         print("\t\tRESETTING BACK TO OLD FIT AND FLAGGING VELOCITY!")
         list_of_bad_velocities = np.append(list_of_bad_velocities.to(u.km/u.s).value,
@@ -1241,7 +1313,7 @@ class Quasar:
         chisq = oldchisq
   
       # Do we need another cloud?
-      if np.max(self.chisq_spec) < maxchi:
+      if np.max(self.chisq_spec) < maxchi or not add_clouds:
         done = True
 
     return clouds
@@ -1278,7 +1350,8 @@ class Quasar:
                  vcl,
                  verbose = False,
                  nr = 300, ntheta = 300,
-                 softenning = 0.1
+                 softenning = 0.1,
+                 nproc = 20
                  ):
     fu = (u.erg / (u.s * u.cm * u.cm * u.Hz))
 
@@ -1301,9 +1374,10 @@ class Quasar:
         if verbose:
           print("#" * 50)
           print(f"\t{i} Making a cloud with the following parameters: xclp = {xclp[i]} yclp = {yclp[i]} --> ")
-          print("\t"*7 + f"xcl = {xcl[i]:.3f}   ycl = {ycl[i]:.3f} zcl={zcl[i]:.3f}  --> r = {rcl[i]:.3f}  theta = {thetacl[i]:.3f}")
-          print("\t"*7 + f"rhoindex = {rhoindex[i]}  logrhoscale = {logrhoscale[i]} logrho0 = {logrho0[i]}  log Z = {logZ[i]}")
-          print("\t"*7 + f"vcl_los = {vcl[i]}")
+          print("\t"*7 + f"xcl = {xcl[i]:.3f}   ycl = {ycl[i]:.3f} zcl={zcl[i]:.3f}")
+          print("\t"*7 + f"                     --> r = {rcl[i]:.3f}  theta = {thetacl[i]:.3f}")
+          print("\t"*7 + f"rhoindex = {rhoindex[i]}  logrhoscale = {logrhoscale[i]} logrho0 = {logrho0[i]}")
+          print("\t"*7 + f"log Z = {logZ[i]}  vcl_los = {vcl[i]}")
         clouds.append(AbsCloud(self.datapath, self.mydisk, self.mycorona, self.myatoms,
                                rcl[i], zcl[i], thetacl[i], rhoindex=rhoindex[i], logrhoscale=logrhoscale[i], logrho0=logrho0[i], logZ=logZ[i], vcl_los=vcl[i]))
         if verbose:
@@ -1314,7 +1388,7 @@ class Quasar:
                                                          nr = nr, ntheta = ntheta,
                                                          robs = rcl[i], thetaobs = thetacl[i], zobs = zcl[i],
                                                          wavelength = clouds[i].ionspecfreq.to(u.Angstrom, equivalencies=u.spectral()),
-                                                         lograd = True, noplot = True
+                                                         lograd = True, noplot = True, verbose = verbose, nproc = nproc
                                                          )[0]
         try:
           dum = self._spectrum_scale
@@ -1330,7 +1404,7 @@ class Quasar:
         clouds[i].ionspecflux = np.where(totflux < 1.0e-100 * fu, 1.0e-100 * fu, totflux)
 
         if verbose:
-          print(f"\t{i} Getting cloudy with it {self.cloudypath}")
+          print(f"\t{i} Resolving ionization structure {self.cloudypath}")
         # This is for creating clouds[i].radius, clouds[i].density, clouds[i].temperature, clouds[i].iondensity
         clouds[i].getcloudy(self.cloudypath, verbose = verbose, runcloudy = False, softenning=softenning)
         (lognuFnu, log_ion_parm) = self._calc_ion_parm(clouds[i])
