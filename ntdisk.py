@@ -602,6 +602,7 @@ class ntdisk:
 
     # This is for interpolating the temperature grid for a particular value of r and z
     def verticaltemperature_onepoint(self,r,z):
-        return np.interp(r, self.rstar, self.verticaltemperature2(np.broadcast_to(z, self.rstar.shape), np.arange(self.nr)))
+        vtemp2 = self.verticaltemperature2(np.broadcast_to(z, self.rstar.shape), np.arange(self.nr))
+        return np.interp(r, self.rstar, vtemp2)
     ######################################################
 
