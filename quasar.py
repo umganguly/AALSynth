@@ -980,6 +980,8 @@ class Quasar:
                       ):
     fu = (u.erg / (u.s * u.cm * u.cm * u.Hz))
 
+    t0 = tm.time()
+
     zt1cs = CubicSpline(self.mydisk.rstar, self.mydisk.zt1)
     Tt1cs = CubicSpline(self.mydisk.rstar, self.mydisk.tempt1.to(u.K).value)
 
@@ -1281,7 +1283,7 @@ class Quasar:
         totflux = self._calculate_absorbed_flux_gaussleg(None,
                                                          robs = rcl[i], thetaobs = thetacl[i], zobs = zcl[i],
                                                          wavelength = clouds[i].ionspecfreq.to(u.Angstrom, equivalencies=u.spectral()),
-                                                         lograd = True, noplot = True
+                                                         lograd = True, noplot = True, verbose = verbose, nproc = nproc
                                                          )[0]
         try:
           dum = self._spectrum_scale
