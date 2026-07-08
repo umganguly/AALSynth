@@ -152,39 +152,39 @@ class AbsCloud:
   #####################################################################
   # Calculate the optical depth as a function of wavelength/frequency for a single sightline
   # Equation 71 from our documentation
-  def runsightline(self,
-                   impact_parameter,
-                   wavelength
-                   ):
-    opticaldepth = np.zeros(wavelength.size)
-    radius       = np.max(self.depth)-self.depth
-    zonearray    = np.where(radius > impact_parameter)[0]
-    #print(f"\t\t\t\tAt impact parameter {impact_parameter}, have to loop through {zonearray.size} zones")
-    for i in range(self.myatoms.nion):
-      ionindex = self.myatoms.idx[i]
+  #def runsightline(self,
+  #                 impact_parameter,
+  #                 wavelength
+  #                 ):
+  #  opticaldepth = np.zeros(wavelength.size)
+  #  radius       = np.max(self.depth)-self.depth
+  #  zonearray    = np.where(radius > impact_parameter)[0]
+  #  #print(f"\t\t\t\tAt impact parameter {impact_parameter}, have to loop through {zonearray.size} zones")
+  #  for i in range(self.myatoms.nion):
+  #    ionindex = self.myatoms.idx[i]
 
-      for zone in zonearray:
-        dx = np.squeeze(self.dr[zone] * np.sqrt(1 - np.square(impact_parameter / radius[zone])))
+  #    for zone in zonearray:
+  #      dx = np.squeeze(self.dr[zone] * np.sqrt(1 - np.square(impact_parameter / radius[zone])))
       
-        N = self.iondensity[zone,i] * dx
-        b = np.squeeze((np.sqrt(2 * const.k_B * self.temperature[zone] / self.myatoms.amass[ionindex])).decompose())
+  #      N = self.iondensity[zone,i] * dx
+  #      b = np.squeeze((np.sqrt(2 * const.k_B * self.temperature[zone] / self.myatoms.amass[ionindex])).decompose())
         
-        tau0   = ((np.sqrt(np.pi) * np.square(const.e.esu)) / (const.m_e * const.c) * self.myatoms.f[ionindex] * self.myatoms.wave[ionindex] * (N / b)).decompose()
-        tauion = np.squeeze(self.myatoms.tauion(wavelength,self.myatoms.anum[ionindex],self.myatoms.ion[ionindex],tau0,b,self.vlos))
+  #      tau0   = ((np.sqrt(np.pi) * np.square(const.e.esu)) / (const.m_e * const.c) * self.myatoms.f[ionindex] * self.myatoms.wave[ionindex] * (N / b)).decompose()
+  #      tauion = np.squeeze(self.myatoms.tauion(wavelength,self.myatoms.anum[ionindex],self.myatoms.ion[ionindex],tau0,b,self.vlos))
 
-        opticaldepth += 2 * tauion
+  #      opticaldepth += 2 * tauion
 
-    return opticaldepth
+  #  return opticaldepth
 
   # Version of runsightline that accepts an array of impact_parameters
-  def runsightline2D(self,
-                     impact_parameter,
-                     wavelength
-                     ):
-    restwavelength = wavelength * np.sqrt((1.0 - (self.vlos/const.c).decompose()) / (1.0 + (self.vlos/const.c).decompose()))
-    opticaldepth = np.zeros((wavelength.size,impact_parameter.size))
-    radius = np.max(self.depth)-self.depth
-    for ipdx in range(impact_parameter.size):
+  #def runsightline2D(self,
+  #                   impact_parameter,
+  #                   wavelength
+  #                   ):
+  #  restwavelength = wavelength * np.sqrt((1.0 - (self.vlos/const.c).decompose()) / (1.0 + (self.vlos/const.c).decompose()))
+  #  opticaldepth = np.zeros((wavelength.size,impact_parameter.size))
+  #  radius = np.max(self.depth)-self.depth
+  #  for ipdx in range(impact_parameter.size):
 
       # See if we can replace zonearray and trdx with a zone_mask and a trans_mask
       #zone_mask = radius > impact_parameter[ipdx]
@@ -203,123 +203,123 @@ class AbsCloud:
       #with np.nditer([idx2d_array,tau0_2d_array, b2d_array.value], flags=['multi_index']) as it:
       #  opticaldepth[:,ipdx] += 2 * np.sum(self.myatoms.tausingle(wavelength,np.int16(it[0]),it[1],it[2] * (u.km/u.s),self.vlos), axis=1)
 
-      zonearray = np.where(radius > impact_parameter[ipdx])[0]
-      if zonearray.size > 0:
-        dxarray   = np.squeeze(self.dr[zonearray] * np.sqrt(1 - np.square(impact_parameter[ipdx] / radius[zonearray])))
-        for i in range(self.myatoms.nion):
-          ionindex = self.myatoms.idx[i]
-          trdx = np.extract((self.myatoms.anum == self.myatoms.anum[ionindex]) & (self.myatoms.ion == self.myatoms.ion[ionindex]) & (self.myatoms.wave > restwavelength[0]) & (self.myatoms.wave < restwavelength[-1]),
-                            range(self.myatoms.wave.size))
-          if trdx.size > 0:
-            Narray    = self.iondensity[zonearray,i] * dxarray
-            barray    = np.squeeze((np.sqrt(2 * const.k_B * self.temperature[zonearray] / self.myatoms.amass[ionindex])).decompose())
-            tau0array = ((np.sqrt(np.pi) * np.square(const.e.esu)) / (const.m_e * const.c) * self.myatoms.f[ionindex] * self.myatoms.wave[ionindex] * (Narray / barray)).decompose()
-            tauion    = self.myatoms.tauion_old(wavelength,
-                                            self.myatoms.anum[ionindex],
-                                            self.myatoms.ion[ionindex],
-                                            tau0array,
-                                            barray,
-                                            np.ones(zonearray.size) * self.vlos)
-            opticaldepth[:,ipdx] += 2 * np.sum(tauion, axis = 1)
+  #    zonearray = np.where(radius > impact_parameter[ipdx])[0]
+  #    if zonearray.size > 0:
+  #      dxarray   = np.squeeze(self.dr[zonearray] * np.sqrt(1 - np.square(impact_parameter[ipdx] / radius[zonearray])))
+  #      for i in range(self.myatoms.nion):
+  #        ionindex = self.myatoms.idx[i]
+  #        trdx = np.extract((self.myatoms.anum == self.myatoms.anum[ionindex]) & (self.myatoms.ion == self.myatoms.ion[ionindex]) & (self.myatoms.wave > restwavelength[0]) & (self.myatoms.wave < restwavelength[-1]),
+  #                          range(self.myatoms.wave.size))
+  #        if trdx.size > 0:
+  #          Narray    = self.iondensity[zonearray,i] * dxarray
+  #          barray    = np.squeeze((np.sqrt(2 * const.k_B * self.temperature[zonearray] / self.myatoms.amass[ionindex])).decompose())
+  #          tau0array = ((np.sqrt(np.pi) * np.square(const.e.esu)) / (const.m_e * const.c) * self.myatoms.f[ionindex] * self.myatoms.wave[ionindex] * (Narray / barray)).decompose()
+  #          tauion    = self.myatoms.tauion_old(wavelength,
+  #                                          self.myatoms.anum[ionindex],
+  #                                          self.myatoms.ion[ionindex],
+  #                                          tau0array,
+  #                                          barray,
+  #                                          np.ones(zonearray.size) * self.vlos)
+  #          opticaldepth[:,ipdx] += 2 * np.sum(tauion, axis = 1)
 
-    return opticaldepth
+  #  return opticaldepth
 
 
   # Version of runsightline that accepts an array of impact_parameters
-  def runsightline2D_new(self,
-                         impact_parameter,
-                         wavelength,
-                         nproc  = 1,
-                         nparse = 30
-                         ):
-    restwavelength = wavelength * np.sqrt((1.0 - (self.vlos/const.c).decompose()) / (1.0 + (self.vlos/const.c).decompose()))
-    opticaldepth = np.zeros((wavelength.size,impact_parameter.size))
+  #def runsightline2D_new(self,
+  #                       impact_parameter,
+  #                       wavelength,
+  #                       nproc  = 1,
+  #                       nparse = 30
+  #                       ):
+  #  restwavelength = wavelength * np.sqrt((1.0 - (self.vlos/const.c).decompose()) / (1.0 + (self.vlos/const.c).decompose()))
+  #  opticaldepth = np.zeros((wavelength.size,impact_parameter.size))
 
-    radius2D = np.broadcast_to(self.radius.to(u.cm), (impact_parameter.size,self.depth.size)) * u.cm
-    drad2D   = np.broadcast_to(self.dr.to(u.cm),     (impact_parameter.size,self.depth.size)) * u.cm
+  #  radius2D = np.broadcast_to(self.radius.to(u.cm), (impact_parameter.size,self.depth.size)) * u.cm
+  #  drad2D   = np.broadcast_to(self.dr.to(u.cm),     (impact_parameter.size,self.depth.size)) * u.cm
 
-    impact_parameter2D = np.broadcast_to(impact_parameter.to(u.cm), (self.depth.size,impact_parameter.size)).T * u.cm
-    zone_mask = radius2D > impact_parameter2D
+  #  impact_parameter2D = np.broadcast_to(impact_parameter.to(u.cm), (self.depth.size,impact_parameter.size)).T * u.cm
+  #  zone_mask = radius2D > impact_parameter2D
 
-    dxarray2D = np.zeros((impact_parameter.size,self.depth.size)) * u.cm
-    dxarray2D[zone_mask] = drad2D[zone_mask] * np.sqrt(1 - np.square(impact_parameter2D[zone_mask] / radius2D[zone_mask]))
+  #  dxarray2D = np.zeros((impact_parameter.size,self.depth.size)) * u.cm
+  #  dxarray2D[zone_mask] = drad2D[zone_mask] * np.sqrt(1 - np.square(impact_parameter2D[zone_mask] / radius2D[zone_mask]))
 
     # Which transitions are available for the rest wavelength range given?
-    trans_mask = (self.myatoms.wave > restwavelength[0]) & (self.myatoms.wave < restwavelength[-1])
+  #  trans_mask = (self.myatoms.wave > restwavelength[0]) & (self.myatoms.wave < restwavelength[-1])
     # I need the indices of the strongest(=first) transition for each ion that is covered (for a given ion, transitions are listed in order of decreasing strength)
-    ions = np.unique(100*self.myatoms.anum + self.myatoms.ion)
-    anumion_mask = np.isin(ions,100*self.myatoms.anum[trans_mask] + self.myatoms.ion[trans_mask])
-    nai = np.int16(np.sum(anumion_mask))
-    aidx = np.int16(np.extract(anumion_mask, range(self.myatoms.nion)))
+  #  ions = np.unique(100*self.myatoms.anum + self.myatoms.ion)
+  #  anumion_mask = np.isin(ions,100*self.myatoms.anum[trans_mask] + self.myatoms.ion[trans_mask])
+  #  nai = np.int16(np.sum(anumion_mask))
+  #  aidx = np.int16(np.extract(anumion_mask, range(self.myatoms.nion)))
 
-    N3D_array        = np.zeros((impact_parameter.size, self.depth.size, self.myatoms.nion)) /  u.cm**2
-    b3D_array        = np.ones( (impact_parameter.size, self.depth.size, self.myatoms.nion)) * (u.km/u.s)
-    flambda_3d_array = np.zeros((impact_parameter.size, self.depth.size, self.myatoms.nion)) * (u.Angstrom)
+  #  N3D_array        = np.zeros((impact_parameter.size, self.depth.size, self.myatoms.nion)) /  u.cm**2
+  #  b3D_array        = np.ones( (impact_parameter.size, self.depth.size, self.myatoms.nion)) * (u.km/u.s)
+  #  flambda_3d_array = np.zeros((impact_parameter.size, self.depth.size, self.myatoms.nion)) * (u.Angstrom)
 
-    for ipdx in range(impact_parameter.size):
-      zdx  = np.int16(np.extract(zone_mask[ipdx,:], range(self.depth.size)))
-      zmask = zone_mask[ipdx,:]
-      N3D_array[       ipdx,zmask,:][:,anumion_mask] = self.iondensity[zmask,:][:,anumion_mask] * (np.broadcast_to(dxarray2D[ipdx,zdx].to(u.cm), (nai,zdx.size)).T * u.cm)
-      b3D_array[       ipdx,zmask,:][:,anumion_mask] = np.sqrt(2 * const.k_B * np.outer(self.temperature[zdx], 1 / self.myatoms.amass[self.myatoms.idx[anumion_mask]])).to(u.km/u.s)
-      flambda_3d_array[ipdx,zmask,:][:,anumion_mask] = np.broadcast_to(self.myatoms.f[self.myatoms.idx[anumion_mask]] * self.myatoms.wave[self.myatoms.idx[anumion_mask]].to(u.Angstrom), (zdx.size, nai)) * u.Angstrom
-      #for zdx in np.int16(np.extract(zone_mask[ipdx,:], range(self.depth.size))):
+  #  for ipdx in range(impact_parameter.size):
+  #    zdx  = np.int16(np.extract(zone_mask[ipdx,:], range(self.depth.size)))
+  #    zmask = zone_mask[ipdx,:]
+  #    N3D_array[       ipdx,zmask,:][:,anumion_mask] = self.iondensity[zmask,:][:,anumion_mask] * (np.broadcast_to(dxarray2D[ipdx,zdx].to(u.cm), (nai,zdx.size)).T * u.cm)
+  #    b3D_array[       ipdx,zmask,:][:,anumion_mask] = np.sqrt(2 * const.k_B * np.outer(self.temperature[zdx], 1 / self.myatoms.amass[self.myatoms.idx[anumion_mask]])).to(u.km/u.s)
+  #    flambda_3d_array[ipdx,zmask,:][:,anumion_mask] = np.broadcast_to(self.myatoms.f[self.myatoms.idx[anumion_mask]] * self.myatoms.wave[self.myatoms.idx[anumion_mask]].to(u.Angstrom), (zdx.size, nai)) * u.Angstrom
+  #    #for zdx in np.int16(np.extract(zone_mask[ipdx,:], range(self.depth.size))):
       #    N3D_array[       ipdx,zdx,anumion_mask] = self.iondensity[zdx,anumion_mask] * dxarray2D[ipdx,zdx]
       #    b3D_array[       ipdx,zdx,anumion_mask] = np.sqrt(2 * const.k_B * self.temperature[zdx] / self.myatoms.amass[self.myatoms.idx[anumion_mask]]).to(u.km/u.s)
       #    flambda_3d_array[ipdx,zdx,anumion_mask] = self.myatoms.f[self.myatoms.idx[anumion_mask]] * self.myatoms.wave[self.myatoms.idx[anumion_mask]]
 
-    tau0_3d_array = ((np.sqrt(np.pi) * np.square(const.e.esu)) / (const.m_e * const.c)) * flambda_3d_array * (N3D_array / b3D_array)
+  #  tau0_3d_array = ((np.sqrt(np.pi) * np.square(const.e.esu)) / (const.m_e * const.c)) * flambda_3d_array * (N3D_array / b3D_array)
 
-    if nproc == 1:
-      for atom_ion_dx in np.extract(anumion_mask, range(self.myatoms.nion)):
-        nimp = 0
-        while nimp < impact_parameter.size:
-          nimp_lo = nimp
-          nimp_hi = np.int16(np.min([impact_parameter.size,nimp_lo+nparse]))
-          tau = self.myatoms.tauion_old(wavelength,
-                                        self.myatoms.anum[self.myatoms.idx[atom_ion_dx]],
-                                        self.myatoms.ion[ self.myatoms.idx[atom_ion_dx]],
-                                        tau0_3d_array[    nimp_lo:nimp_hi,:,atom_ion_dx].flatten(),
-                                        b3D_array[        nimp_lo:nimp_hi,:,atom_ion_dx].flatten(),
-                                        np.ones(b3D_array[nimp_lo:nimp_hi,:,atom_ion_dx].shape).flatten() * self.vlos
-                                        ) * 2
-          opticaldepth[:,nimp_lo:nimp_hi] += np.sum(tau.reshape(wavelength.size,nimp_hi-nimp_lo,self.depth.size),axis=2)
-          nimp += nparse
-    else:
-      which_ions = np.extract(anumion_mask, range(self.myatoms.nion))
+  #  if nproc == 1:
+  #    for atom_ion_dx in np.extract(anumion_mask, range(self.myatoms.nion)):
+  #      nimp = 0
+  #      while nimp < impact_parameter.size:
+  #        nimp_lo = nimp
+  #        nimp_hi = np.int16(np.min([impact_parameter.size,nimp_lo+nparse]))
+  #        tau = self.myatoms.tauion_old(wavelength,
+  #                                      self.myatoms.anum[self.myatoms.idx[atom_ion_dx]],
+  #                                      self.myatoms.ion[ self.myatoms.idx[atom_ion_dx]],
+  #                                      tau0_3d_array[    nimp_lo:nimp_hi,:,atom_ion_dx].flatten(),
+  #                                      b3D_array[        nimp_lo:nimp_hi,:,atom_ion_dx].flatten(),
+  #                                      np.ones(b3D_array[nimp_lo:nimp_hi,:,atom_ion_dx].shape).flatten() * self.vlos
+  #                                      ) * 2
+  #        opticaldepth[:,nimp_lo:nimp_hi] += np.sum(tau.reshape(wavelength.size,nimp_hi-nimp_lo,self.depth.size),axis=2)
+  #        nimp += nparse
+  #  else:
+  #    which_ions = np.extract(anumion_mask, range(self.myatoms.nion))
 
-      nimp = 0
-      t1 = tm.time()
-      time_per_ip = 0.0
-      old_time_per_ip = time_per_ip
-      while (nimp < impact_parameter.size):
-        if old_time_per_ip < time_per_ip:
-          nparse *= 2
-        else:
-          nparse = nparse // 3
-        with Pool(which_ions.size) as pool:
-          nimp_lo = nimp
-          if nimp_lo < impact_parameter.size:
-            nimp_hi = np.int16(np.min([impact_parameter.size,nimp_lo+nparse]))
-          print(f"\t\t\tStarting integration for patches {nimp_lo} - {nimp_hi} ({nparse})  {tm.time()-t1} s  ({time_per_ip}) s / sightline")
-          pool_input_tuple = []
-          for pdx in range(which_ions.size):
-              atom_ion_dx = which_ions[pdx]
-              pool_input_tuple.append((wavelength,
-                                       self.myatoms.anum[self.myatoms.idx[atom_ion_dx]],
-                                       self.myatoms.ion[ self.myatoms.idx[atom_ion_dx]],
-                                       tau0_3d_array[    nimp_lo:nimp_hi,:,atom_ion_dx].flatten(),
-                                       b3D_array[        nimp_lo:nimp_hi,:,atom_ion_dx].flatten(),
-                                       np.ones(b3D_array[nimp_lo:nimp_hi,:,atom_ion_dx].shape).flatten() * self.vlos) )
+  #    nimp = 0
+  #    t1 = tm.time()
+  #    time_per_ip = 0.0
+  #    old_time_per_ip = time_per_ip
+  #    while (nimp < impact_parameter.size):
+  #      if old_time_per_ip < time_per_ip:
+  #        nparse *= 2
+  #      else:
+  #        nparse = nparse // 3
+  #      with Pool(which_ions.size) as pool:
+  #        nimp_lo = nimp
+  #        if nimp_lo < impact_parameter.size:
+  #          nimp_hi = np.int16(np.min([impact_parameter.size,nimp_lo+nparse]))
+  #        print(f"\t\t\tStarting integration for patches {nimp_lo} - {nimp_hi} ({nparse})  {tm.time()-t1} s  ({time_per_ip}) s / sightline")
+  #        pool_input_tuple = []
+  #        for pdx in range(which_ions.size):
+  #            atom_ion_dx = which_ions[pdx]
+  #            pool_input_tuple.append((wavelength,
+  #                                     self.myatoms.anum[self.myatoms.idx[atom_ion_dx]],
+  #                                     self.myatoms.ion[ self.myatoms.idx[atom_ion_dx]],
+  #                                     tau0_3d_array[    nimp_lo:nimp_hi,:,atom_ion_dx].flatten(),
+  #                                     b3D_array[        nimp_lo:nimp_hi,:,atom_ion_dx].flatten(),
+  #                                     np.ones(b3D_array[nimp_lo:nimp_hi,:,atom_ion_dx].shape).flatten() * self.vlos) )
 
-          tau_output_tuple = pool.starmap(self.myatoms.tauion_old, pool_input_tuple)
+  #        tau_output_tuple = pool.starmap(self.myatoms.tauion_old, pool_input_tuple)
 
-          for pdx in range(which_ions.size):
-            opticaldepth[:,nimp_lo:nimp_hi] += np.sum(tau_output_tuple[pdx].reshape(wavelength.size,nimp_hi-nimp_lo,self.depth.size),axis=2)
+  #        for pdx in range(which_ions.size):
+  #          opticaldepth[:,nimp_lo:nimp_hi] += np.sum(tau_output_tuple[pdx].reshape(wavelength.size,nimp_hi-nimp_lo,self.depth.size),axis=2)
 
-          old_time_per_ip = time_per_ip
-          time_per_ip = (tm.time() - t1) / (nimp_hi - nimp_lo)
-          t1 = tm.time()
+  #        old_time_per_ip = time_per_ip
+  #        time_per_ip = (tm.time() - t1) / (nimp_hi - nimp_lo)
+  #        t1 = tm.time()
 
-        nimp = nimp_hi
+  #      nimp = nimp_hi
 
-    return opticaldepth
+  #  return opticaldepth

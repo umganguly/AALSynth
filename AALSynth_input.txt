@@ -48,9 +48,10 @@ redospline = False
 ############################################
 # Optimization parameters
 maxchi = 1.5    
-minstep = 0.0001
+minstep = 0.001
+initstep = 0.1
 maxiter = 100
 mcmin = True
 dstep = 0.25
-add_clouds = False
+add_clouds = True
 F_test_prob = 0.05
