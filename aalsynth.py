@@ -63,19 +63,10 @@ myquasar = Quasar(mypars)
 if mypars.calcabscl:
   print(breakstr)
 
-  myquasar.readspec(mypars.qname, mypars.qfileroot, redospline=mypars.redospline, vlo=mypars.vlo, vhi=mypars.vhi)
+  myquasar.readspec()
   myquasar._build_modwave(wres = mypars.vres * np.average(myquasar.mydata.new_w) / const.c.to(u.km/u.s))
   print(breakstr)
-  myquasar.clouds = myquasar.fitabs(mypars.maxchi,
-                                    nproc = mypars.nproc,
-                                    add_clouds = mypars.add_clouds,
-                                    nr = mypars.gaussleg_nr, ntheta = mypars.gaussleg_ntheta, 
-                                    maxiter = mypars.maxiter, mcmin = mypars.mcmin, minstep = mypars.minstep,
-                                    dstep = mypars.dstep,
-                                    softenning = mypars.softenning,
-                                    F_test_prob = mypars.F_test_prob,
-                                    verbose = mypars.verbose
-                                   )
+  myquasar.clouds = myquasar.fitabs()
   
   myquasar.printpars()
   myquasar._abs_write_clouds(myquasar.clouds)

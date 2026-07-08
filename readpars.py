@@ -265,6 +265,12 @@ class readpars:
             self.minstep = 1.0e-5
 
          try:
+            print(f"Initial step = {self.initstep}")
+         except AttributeError:
+            print(f"Initial step not defined in {inputfile}")
+            self.initstep = 1.0
+
+         try:
             print(f"dstep = {self.dstep}")
          except AttributeError:
             print(f"dstep not not defined in {inputfile}")

@@ -271,7 +271,11 @@ class ntdisk:
 
         fluxrt  = np.zeros((frequency.size,ntr,self.robs.size)) * fu # shape is (frequency.size,ntr,self.robs.size).. duh
         # shape is (ntr,self.robs.size)
-        self.cosbeta = np.sum(self.Rhat * np.transpose(np.broadcast_to([gradzx,gradzy,gradzz], (self.robs.size,3,ntr)), (2,0,1)), axis=2) / np.transpose(np.broadcast_to(gradzmag, (self.robs.size,ntr))) # shape is (ntr,self.robs.size)
+        gradZhat = np.transpose(np.broadcast_to([gradzx,gradzy,gradzz], 
+                                                (self.robs.size,3,ntr)),
+                                (2,0,1)
+                                ) / gradzmag[:,None,None] #  np.transpose(np.broadcast_to(gradzmag, (self.robs.size,ntr)), (2,0,1))
+        self.cosbeta = np.sum(self.Rhat * gradZhat , axis=2)  # shape is (ntr,self.robs.size)
         # shape should be (ntr,self.robs.size)
         cbdx  = np.extract(self.cosbeta > 0.0, range(self.cosbeta.size))
         cbdxo = np.int16(np.mod(cbdx, self.robs.size))
