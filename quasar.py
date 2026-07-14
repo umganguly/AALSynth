@@ -268,7 +268,7 @@ class Quasar:
     # Observer coordinates (reset here for sanity)
     self.reset_observer()
 
-    (totflux, unabsflux) = self._calculate_absorbed_flux_gaussleg(clouds, lograd = True)
+    (totflux, unabsflux) = self._calculate_absorbed_flux_gaussleg(clouds, self.mypars, lograd = True)
     chisq = np.sum(self._abs_chisq(totflux, unabsflux))
     self.bestfit = totflux/unabsflux
     self.print_clouds(clouds, ntabs=2)
@@ -601,6 +601,15 @@ class Quasar:
                   )
       except AttributeError:
         pass
+      #----------------------------------------------------------
+      try:
+        for clddx in range(self.cld_totflux.shape[1]):
+          plt.plot(self.species_velocity[:,myatoms_index],
+                   self.cld_totflux[:,clddx]/unabsflux + tdx,
+                   self.plot_code[tdx]+":"
+                  )
+      except IndexError:
+        print("Oops... no clouds yet")
       #----------------------------------------------------------
       try:
         plt.plot(self.species_velocity[:,myatoms_index],
