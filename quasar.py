@@ -175,6 +175,8 @@ class Quasar:
                              ):
 
     if clouds is not None:
+      t0 = tm.time()
+
       rcl, zcl, thetacl, logrhoscale, rhoindex, logrho0, logZ, vcl  = self.grab_cloud_pars(clouds)
       ncl = len(clouds)
 
@@ -219,6 +221,11 @@ class Quasar:
                                                       )                 # shape (wavelength.shape + impact_parameter.shape + cloud.radius.shape)
 
           cloud_optical_depth[cdx,:,:] += cdx_optical_depth.sum(axis=-1)
+      
+      try:
+        self.t_abs_all_optical_depth += tm.time() - t0
+      except:
+        self.t_abs_all_optical_depth = tm.time() - t0
     else:
       min_impact_parameter = None
       cloud_optical_depth = None
@@ -245,9 +252,9 @@ class Quasar:
       abs_upper_bounds.append(                             self.mydisk.rstar[-1] ) # ycl
       abs_upper_bounds.append(        (1.0 * u.kpc / self.mydisk.rg).decompose() ) # zcl
       abs_upper_bounds.append(                                               5.0 ) # rhoindex
-      abs_upper_bounds.append(                             cld.logrhoscale + 1.5 ) # logrhoscale
+      abs_upper_bounds.append(                             cld.logrhoscale + 2.5 ) # logrhoscale
       abs_upper_bounds.append(                                 cld.logrho0 + 4.0 ) # logrho0
-      abs_upper_bounds.append(                                      cld.logZ+2.0 ) # log Z
+      abs_upper_bounds.append(                                      cld.logZ+3.0 ) # log Z
       abs_upper_bounds.append((cld.vlos + 100.0 * (u.km/u.s)).to(u.km/u.s).value ) # vlos
 
     return (abs_lower_bounds,abs_upper_bounds)
@@ -261,7 +268,7 @@ class Quasar:
     # Observer coordinates (reset here for sanity)
     self.reset_observer()
 
-    (totflux, unabsflux) = self._calculate_absorbed_flux_gaussleg(clouds, self.mypars, lograd = True)
+    (totflux, unabsflux) = self._calculate_absorbed_flux_gaussleg(clouds, lograd = True)
     chisq = np.sum(self._abs_chisq(totflux, unabsflux))
     self.bestfit = totflux/unabsflux
     self.print_clouds(clouds, ntabs=2)
@@ -313,12 +320,12 @@ class Quasar:
   def _abs_chisqfunc(self,
                      x
                      ):
-    clouds = self._abs_unpack(x)
+    self._chisqfunc_clouds = self._abs_unpack(x)
 
     # Observer coordinates (reset here for sanity)
     self.reset_observer()
 
-    (totflux, unabsflux) = self._calculate_absorbed_flux_gaussleg(clouds)
+    (totflux, unabsflux) = self._calculate_absorbed_flux_gaussleg(self._chisqfunc_clouds)
     chisq_spec = self._abs_chisq(totflux, unabsflux)
 
     return chisq_spec.flatten()
@@ -406,6 +413,10 @@ class Quasar:
       rhoindex    += step_size * dx[5*ncl:6*ncl]
       logrho0     += step_size * dx[6*ncl:7*ncl]
 
+      for i in range (rhoindex.size):
+        rhoindex[i] = np.max([rhoindex[i],0])
+ 
+
       vcl += 5.0 * step_size * dx[7*ncl:8*ncl] * (u.km/u.s)
 
       # Make the potential new clouds
@@ -448,8 +459,9 @@ class Quasar:
         self._abscall_t0 = tm.time() * u.s
       else:
         good_direction = False
-        niter -= 1
         step_size *= 1.0 - self.mypars.dstep
+        if not check_negative_direction:
+          niter -= 1
 
         print(f"\n\tKeeping old fit! iterations remaining: {niter}    chisq = {chisq} + {newchisq-chisq}")
 
@@ -467,6 +479,8 @@ class Quasar:
     optical_depth = np.zeros(wavelength.shape + impact_parameter.shape + cloud.radius.shape)
 
     if np.any(impact_parameter < np.max(cloud.radius)):
+
+      t0 = tm.time()
 
       ip_ratio = np.outer(impact_parameter,
                           1 / (cloud.radius + 1 * u.cm)
@@ -491,24 +505,9 @@ class Quasar:
       except AttributeError:
         self.optical_depth_pool_fill_time = tm.time() - t0
 
-      istart = 0
-      iend   = 0
-      while iend < len(pool_tuple_input)+self.mypars.nproc:
-        iend = np.min([istart+self.mypars.nproc,len(pool_tuple_input)])
-        with Pool(self.mypars.nproc) as pool:
-          optical_depth_output_tuple = pool.starmap(self._abs_optical_depth_single_species, pool_tuple_input[istart:iend])
-        for (optical_depth_species, dvel_mask, optical_depth_bv_fill_time, optical_depth_Ntau0_fill_time, optical_depth_voigt_calc_time) in optical_depth_output_tuple:
-          optical_depth[dvel_mask,:,:] += optical_depth_species
-          try:
-            self.optical_depth_bv_fill_time    += optical_depth_bv_fill_time     / (iend-istart)
-            self.optical_depth_Ntau0_fill_time += optical_depth_Ntau0_fill_time  / (iend-istart)
-            self.optical_depth_voigt_calc_time += optical_depth_voigt_calc_time  / (iend-istart)
-          except AttributeError:
-            self.optical_depth_bv_fill_time    = optical_depth_bv_fill_time     / (iend-istart)
-            self.optical_depth_Ntau0_fill_time = optical_depth_Ntau0_fill_time  / (iend-istart)
-            self.optical_depth_voigt_calc_time = optical_depth_voigt_calc_time  / (iend-istart)
-        istart = iend
-        iend = istart+self.mypars.nproc
+      for tuple_input in pool_tuple_input:
+        (optical_depth_species, dvel_mask, optical_depth_bv_fill_time, optical_depth_Ntau0_fill_time, optical_depth_voigt_calc_time) = self._abs_optical_depth_single_species(*tuple_input)
+        optical_depth[dvel_mask,:,:] += optical_depth_species
 
     return optical_depth # shape (wavelength.size, impact_parameter.size, cloud.radius.size)
 
@@ -530,7 +529,7 @@ class Quasar:
     dvel = np.outer((velocity[:,myatoms_index] - vlos), # shape (velocity[:,myatoms_index].size,)
                      1 / bvalue                         # shape (cloud.radius.size,)
                     ).decompose()                       # shape (velocity[:,myatoms_index].size, cloud.radius.size)
-    optical_depth_bv_fill_time = tm.time() - t0
+    #optical_depth_bv_fill_time = tm.time() - t0
 
     dvel_mask = np.abs(velocity[:,myatoms_index] - vlos)/np.average(bvalue) < 300.0
     if np.any(dvel_mask):
@@ -554,6 +553,8 @@ class Quasar:
       optical_depth_Ntau0_fill_time = 0
       optical_depth_voigt_calc_time = 0
 
+    optical_depth_bv_fill_time = tm.time() - t0
+
     return optical_depth_species, dvel_mask, optical_depth_bv_fill_time, optical_depth_Ntau0_fill_time, optical_depth_voigt_calc_time
 
   #######################################################################################
@@ -574,6 +575,7 @@ class Quasar:
                 totflux, unabsflux,
                 vcl = np.array([])
                 ):
+    plt.ion()
     plt.clf()
 
     plt.plot(self.velocity, np.zeros(self.velocity.size), "k--")
@@ -589,7 +591,7 @@ class Quasar:
                  c=self.plot_code[tdx],
                  label=f"{self.myatoms.specstr[myatoms_index]} "+r"$\lambda$"+f"{self.myatoms.wave[myatoms_index]:.3f}")
       except AttributeError:
-        print("Oops.. no data read in yet...")
+        pass
       #----------------------------------------------------------
       try:
         for clddx in range(self.cld_totflux.shape[1]):
@@ -597,8 +599,8 @@ class Quasar:
                    self.cld_totflux[:,clddx]/unabsflux + tdx,
                    self.plot_code[tdx]+":"
                   )
-      except IndexError:
-        print("Oops... no clouds yet")
+      except AttributeError:
+        pass
       #----------------------------------------------------------
       try:
         plt.plot(self.species_velocity[:,myatoms_index],
@@ -613,7 +615,7 @@ class Quasar:
                    self.bestfit + tdx,
                    f"{self.plot_code[tdx]}--")
       except AttributeError:
-        print("Oops... no bestfit yet")
+        pass
 
     if vcl.size > 0:
       for v in vcl:
@@ -628,7 +630,6 @@ class Quasar:
     chisq_spec = self._abs_chisq(totflux, unabsflux)
     chisq      = np.sum(chisq_spec)
     title_str += r"$\chi^2 = $" + f"{chisq:.3f}"
-
 
     plt.title(title_str)
     plt.xlim([self.velocity[0].to(u.km/u.s).value, self.velocity[-1].to(u.km/u.s).value])
@@ -672,7 +673,8 @@ class Quasar:
                              logrhoscale, 
                              logrho0, 
                              logZ, 
-                             vcl_los)
+                             vcl_los,
+                             ntabs = 1)
 
     return clouds
 
@@ -847,17 +849,24 @@ class Quasar:
 
     if robs is None:
       robs     = self.robs
+    if thetaobs is None:
       thetaobs = 0.0
+    if zobs is None:
       zobs     = self.zobs
 
     self.reset_observer(robs     =    robs,
                         thetaobs = thetaobs,
                         zobs      =    zobs
                         )
-    robs_vec = np.array([robs * np.cos(thetaobs),
-                         robs * np.sin(thetaobs),
-                         zobs
-                         ])
+    try:
+      robs_vec = np.array([robs * np.cos(thetaobs),
+                           robs * np.sin(thetaobs),
+                           zobs
+                           ])
+    except TypeError:
+      print(f"Tried to make robs_vec using robs = {robs}   thetaobs = {thetaobs}   zobs = {zobs}")
+      input("paused")
+
     if debug:
       print(f"robs_vec = {robs_vec}")
 
@@ -881,7 +890,6 @@ class Quasar:
         else:
           rdisk = self.mydisk.rstar[0] + (self.mydisk.rstar[-1] - self.mydisk.rstar[0]) * (gaussleg_y_r[rdx] + 1) / 2 # Units rg (linear)
         
-
         if separate_theta:
           for tdx in range(self.mypars.gaussleg_ntheta):
             thetadisk = np.array([np.pi * (gaussleg_y_theta[tdx] + 1.)]) # Azimuthal angle
@@ -917,18 +925,26 @@ class Quasar:
       if self.mypars.verbose:
         print(f"\t\tIntegrating across disk with at most {self.mypars.nproc} processors...({tm.time()-t0})")
 
-      t_last_plot = tm.time()
+      with Pool(self.mypars.nproc) as pool:
+        output_flux_pool_tuple = pool.starmap_async(self._flux_annulus, pool_tuple_input)
+        output_flux_pool_tuple.wait()
+
+      if self.mypars.verbose:
+        print(f"\t\tIntegration complete... ({tm.time()-t0})")
+
       min_impact_parameters_all_sightlines = None
-      for iend in tqdm(range(len(pool_tuple_input)), desc=f"\t\t\tIntegrating {dumstr}", ncols=0):
-        (fluxrtnu, cld_optical_depth, min_impact_parameter) = self._flux_sightline(*pool_tuple_input[iend]) # fluxrtnu.shape = optical_depth.shape = (wavelength.size, thetadisk.size)
+      plot_nit = 0
+      for (fluxrtnu, cld_optical_depth, min_impact_parameter) in tqdm(output_flux_pool_tuple.get(), desc=f"\t\t\tAssembling {dumstr}", ncols=0):
         tmp_flux_sum = np.sum(fluxrtnu, axis=-1)  # Sum over sightlines
         unabsflux += tmp_flux_sum
+        
         if clouds is not None:
           for clddx in range(len(clouds)):
             self.cld_totflux[:,clddx] += np.sum(fluxrtnu * np.exp(-cld_optical_depth[clddx,:,:]), axis=-1)
           totflux += np.sum(fluxrtnu * np.exp(-np.sum(cld_optical_depth, axis=0)), axis=-1)
         else:
           totflux += tmp_flux_sum # Sum over sightlines
+        
         if min_impact_parameter is not None:
           try:
             min_impact_parameters_all_sightlines = np.append(min_impact_parameters_all_sightlines, 
@@ -936,12 +952,13 @@ class Quasar:
                                                              axis=0)
           except ValueError:
             min_impact_parameters_all_sightlines = np.array([min_impact_parameter])
-        #if iend % 10 == 5 and not noplot:
-        if tm.time()-t_last_plot > 30.0 and not noplot:
+        
+        if not noplot and plot_nit % 10 == 0:
           self._abs_plot(totflux, unabsflux,
                          vcl = self.grab_cloud_pars(clouds)[-1] # = vcl
                          )
-          t_last_plot = tm.time()
+          plot_nit += 1
+ 
 
       if clouds is not None:
         min_impact_parameters_all_sightlines = np.min(min_impact_parameters_all_sightlines, axis=0)
@@ -970,15 +987,17 @@ class Quasar:
     return totflux,unabsflux # shape = wavelength.shape
 
   #######################################################################################
-  def _flux_sightline(self,
-                      rdisk, thetadisk, # Disk parameters. rdisk is scalar, thetadisk is 1D nd.array
-                      clouds,           # Clouds parameters (list of AbsClouds)
-                      robs_vec,         # Observer parameters (nd.array with shape (3,) )
-                      gaussleg_y_r, gaussleg_w_r, gaussleg_w_theta, # Integration parameters [y = radial/log-radial locations, w = weights]
-                      wavelength,       # Spectral parameters (i.e., wavelengths in a 1D nd.array)
-                      lograd            # boolean for quadrature method
-                      ):
+  def _flux_annulus(self,
+                    rdisk, thetadisk, # Disk parameters. rdisk is scalar, thetadisk is 1D nd.array
+                    clouds,           # Clouds parameters (list of AbsClouds)
+                    robs_vec,         # Observer parameters (nd.array with shape (3,) )
+                    gaussleg_y_r, gaussleg_w_r, gaussleg_w_theta, # Integration parameters [y = radial/log-radial location, w = weights]
+                    wavelength,       # Spectral parameters (i.e., wavelengths in a 1D nd.array)
+                    lograd            # boolean for quadrature method
+                    ):
     fu = (u.erg / (u.s * u.cm * u.cm * u.Hz))
+
+    t0 = tm.time()
 
     zt1cs = CubicSpline(self.mydisk.rstar, self.mydisk.zt1)
     Tt1cs = CubicSpline(self.mydisk.rstar, self.mydisk.tempt1.to(u.K).value)
@@ -993,18 +1012,20 @@ class Quasar:
     dzt1dr = zt1cs(rdisk, nu=1)
     Tt1    = Tt1cs(rdisk) * u.K
 
-    gradz_vec = np.array([-dzt1dr * np.cos(thetadisk),
+    gradZ_vec = np.array([-dzt1dr * np.cos(thetadisk),
                           -dzt1dr * np.sin(thetadisk),
                           np.ones(thetadisk.size)
                           ])
-    gradzmag = np.sqrt(np.sum(gradz_vec*gradz_vec, axis=0))
+    gradZmag = np.sqrt(np.sum(gradZ_vec*gradZ_vec, axis=0))
 
     R_vec = np.broadcast_to(robs_vec, rdisk_vec.T.shape).T - rdisk_vec
     Rmag = np.sqrt(np.sum(R_vec*R_vec, axis=0))
     if(np.any(Rmag == 0)):
       input("Rmag is zero")
 
-    cosbeta = np.array([np.dot(R_vec[:,i], gradz_vec[:,i]) for i in range(thetadisk.size)]) / (gradzmag * Rmag)
+    #cosbeta = np.array([np.dot(R_vec[:,i], gradz_vec[:,i]) for i in range(thetadisk.size)]) / (gradzmag * Rmag)
+    cosbeta = np.sum(R_vec * gradZ_vec, axis=0) / (Rmag * gradZmag)
+    cosbeta_mask = cosbeta >  0
 
     # With the doppler shift, we have to figure out what frequencies are being emitted by the patch that are observed at "frequency"
     # So, we have to unshift the frequency array for each patch
@@ -1020,21 +1041,32 @@ class Quasar:
                                     ) # shape = (wavelength.size, thetadisk.size)
 
     Bnu = np.zeros(doppler_unshift_freq.shape) * fu / u.sr
-    Bnu_mask = const.h * doppler_unshift_freq / (const.k_B * Tt1) < 670.74 # This is to prevent underflows... 670.74 was just determined through trial and error
+    Bnu_mask = cosbeta_mask[None,:] & (const.h * doppler_unshift_freq / (const.k_B * Tt1) < 670.74) # This is to prevent underflows... 670.74 was just determined through trial and error
     Bnu[Bnu_mask] = BlackBody().evaluate(doppler_unshift_freq[Bnu_mask],Tt1,1) # Emitted at doppler_unshift_freq, observed at gaussleg_freq
 
+
+    tmp_fluxrtnu=  np.pi * (Bnu[:,cosbeta_mask] * u.sr) * gaussleg_w_r * gaussleg_w_theta[cosbeta_mask] * (doppler_beam_fac[cosbeta_mask]**3) * cosbeta[cosbeta_mask] / Rmag[cosbeta_mask]**2
+    fluxrtnu = np.zeros(Bnu.shape) * fu
     if lograd:
-      fluxrtnu  = np.pi * ((self.mydisk.rstar[0])**2) * (np.log(self.mydisk.rstar[-1]/self.mydisk.rstar[0])) * np.power(self.mydisk.rstar[-1]/self.mydisk.rstar[0],
-                                                                                                                        gaussleg_y_r + 1)
+      fluxrtnu[:,cosbeta_mask]  = ((self.mydisk.rstar[0])**2) * (np.log(self.mydisk.rstar[-1]/self.mydisk.rstar[0])) * np.power(self.mydisk.rstar[-1]/self.mydisk.rstar[0],
+                                                                                                                                gaussleg_y_r + 1) * tmp_fluxrtnu
     else:
-      fluxrtnu = np.pi * (self.mydisk.rstar[-1] - self.mydisk.rstar[0]) * rdisk / 2.0
+      fluxrtnu[:,cosbeta_mask] = (self.mydisk.rstar[-1] - self.mydisk.rstar[0]) * rdisk * tmp_fluxrtnu / 2.0
 
-    fluxrtnu *=  (Bnu * u.sr) * gaussleg_w_r * gaussleg_w_theta * (doppler_beam_fac**3) * cosbeta / Rmag**2
+    try:
+      self.t_flux_annulus_pre_tau += tm.time() - t0
+    except:
+      self.t_flux_annulus_pre_tau = tm.time() - t0
 
+    t0 = tm.time()
     cld_optical_depth, min_impact_parameter = self._abs_all_optical_depth(clouds,           # List of AbsClouds
                                                                           rdisk_vec, R_vec, # 2D nd.arrays with shapes (3,thetadisk.size)
                                                                           wavelength        # 1d nd.array
                                                                           ) # shape = (wavelength.size, thetadisk.size)
+    try:
+      self.t_flux_annulus_post_tau += tm.time() - t0
+    except:
+      self.t_flux_annulus_post_tau = tm.time() - t0
 
     return fluxrtnu, cld_optical_depth, min_impact_parameter
 
@@ -1071,6 +1103,7 @@ class Quasar:
     (totflux,unabsflux) = self._calculate_absorbed_flux_gaussleg(self.clouds)
     self.bestfit = totflux/unabsflux
     self._abs_plot(totflux, unabsflux)
+    plt.pause(0.01)
     chisq = np.sum(self._abs_chisq(totflux, unabsflux))
     print(f"Initial chisq = {chisq}")
 
@@ -1078,7 +1111,10 @@ class Quasar:
       (rcl, zcl, thetacl, logrhoscale, rhoindex, logrho0, logZ, vcl) = self.grab_cloud_pars(self.clouds)
       xclp,yclp = self._abs_project_clouds(rcl, zcl, thetacl)
 
+    # General -- self.clouds should preserve the best fit, whereas clouds is used for experimentation (adding new clouds, optimizing, comparison with self.clouds)
     list_of_bad_velocities = np.array([]) * (u.km/u.s)
+    if self.clouds is not None:
+      list_of_bad_velocities = np.copy(vcl)
     res = None
     oldres = None
     done = False
@@ -1089,7 +1125,7 @@ class Quasar:
         velocity_mask = (self.obsvel[i,-1] > self.velocity) & (self.obsvel[i,0] < self.velocity) & \
           (np.interp(self.velocity, self.obsvel[i,:], self.bigew, left=0, right=0) > np.interp(self.velocity, self.obsvel[i,:], self.bigsew, left=0, right=0))
         for bad_velocity in list_of_bad_velocities:
-          velocity_mask = velocity_mask & ((self.velocity < bad_velocity - self.vres) | (self.velocity > bad_velocity + self.vres))
+          velocity_mask = velocity_mask & ((self.velocity < bad_velocity - self.mypars.vres) | (self.velocity > bad_velocity + self.mypars.vres))
         tot_chisq_spec[velocity_mask] += np.interp(self.velocity[velocity_mask], self.obsvel[i,:], self.chisq_spec[i,:])
 
       potential_bad_vel = np.extract(tot_chisq_spec == np.max(tot_chisq_spec), self.velocity)[0]
@@ -1097,29 +1133,33 @@ class Quasar:
       if self.mypars.add_clouds:
         print(f"\t... and adding it at {potential_bad_vel} with badness {np.max(tot_chisq_spec)}")
         try:
-          xclp        = np.append(                  xclp,                                  0.0)
-          yclp        = np.append(                  yclp,                                  0.0)
-          rhoindex    = np.append(              rhoindex,                                  2.0)
-          logrhoscale = np.append(           logrhoscale,                                 15.5)
-          logrho0     = np.append(               logrho0,                                  2.5)
-          logZ        = np.append(                  logZ,                                  0.0)
+          xclp        = np.append(                  xclp, 0.0                                                                     )
+          yclp        = np.append(                  yclp, 0.0                                                                     )
+          rhoindex    = np.append(              rhoindex, 1.0 + 1.5 * np.random.rand(1)                                           )
+          logrhoscale = np.append(           logrhoscale, 2.0 + 2.5 * np.random.rand(1) + np.log10(self.mydisk.rg.to(u.cm).value) )
+          logrho0     = np.append(               logrho0, 2.0 + 1.5 * np.random.rand(1)                                           )
+          logZ        = np.append(                  logZ, 0.0                                                                     )
           vcl         = np.append(vcl.to(u.km/u.s).value, potential_bad_vel.to(u.km/u.s).value) * (u.km/u.s)
 
-          zcl_prop = (np.random.rand(1) * u.kpc / self.mydisk.rg).decompose()
-          while (zcl_prop < 10.0**(1.5 + logrhoscale[-1]) * u.cm / self.mydisk.rg) or (zcl_prop > (1.0 * u.kpc / self.mydisk.rg).decompose()):
+          #zcl_prop = (10.0**(2.6 + logrhoscale[-1]) * u.cm / self.mydisk.rg).decompose()
+          zcl_prop = (np.random.rand(1) * 0.5 * u.kpc / self.mydisk.rg).decompose()
+          while (zcl_prop < 10.0**(1.5 + logrhoscale[-1]) * u.cm / self.mydisk.rg) or (zcl_prop > 10.0**(3.0 + logrhoscale[-1]) * u.cm / self.mydisk.rg):
             zcl_prop = (np.random.rand(1) *  u.kpc / self.mydisk.rg).decompose()
           zcl         = np.append(                   zcl, zcl_prop)
         except:
           xclp        = np.array([ 0.0])
           yclp        = np.array([ 0.0]) 
-          rhoindex    = np.array([ 2.0])
-          logrhoscale = np.array([15.5])
-          logrho0     = np.array([ 3.5])
           logZ        = np.array([ 0.0])
+
           vcl         = np.array([potential_bad_vel.to(u.km/u.s).value]) * (u.km/u.s)
 
-          zcl = (np.random.rand(1) * u.kpc / self.mydisk.rg).decompose()
-          while (zcl < 10.0**(1.5 + logrhoscale[-1]) * u.cm / self.mydisk.rg) or (zcl > (1.0 * u.kpc / self.mydisk.rg).decompose()):
+          rhoindex    = 1.0 + 1.5 * np.random.rand(1)
+          logrhoscale = 2.0 + 2.5 * np.random.rand(1) + np.log10(self.mydisk.rg.to(u.cm).value)
+          logrho0     = 2.0 + 1.5 * np.random.rand(1)
+
+          #zcl = (10.0**(2.6 + logrhoscale) * u.cm / self.mydisk.rg).decompose()
+          zcl = (np.random.rand(1) * 0.5 * u.kpc / self.mydisk.rg).decompose()
+          while (zcl < 10.0**(1.5 + logrhoscale[-1]) * u.cm / self.mydisk.rg) or (zcl > 10.0**(3.0 + logrhoscale[-1]) * u.cm / self.mydisk.rg):
             zcl = (np.random.rand(1) * u.kpc / self.mydisk.rg).decompose()
 
         clouds = self.makeclouds(xclp, yclp, zcl,
@@ -1127,6 +1167,7 @@ class Quasar:
                                  vcl
                                  )
         self._abs_write_clouds(clouds)
+
       else:
         print(f"\t... but not actually adding it...sigh... (would have been {potential_bad_vel})")
         clouds = self.clouds
@@ -1145,48 +1186,45 @@ class Quasar:
                                                         )
         x = self._abs_pack(mcminimize_clouds)
       else:
-        x = self._abs_pack(clouds)
         if not res is None:
           oldres = res.copy()
         res = least_squares(self._abs_chisqfunc,
-                            x,
+                            self._abs_pack(clouds),
                             bounds=self._abs_bounds(clouds),
                             jac="2-point",
                             callback=self._abs_callback
                             )
-        x = res.x
-        
+
       print(f"Optimized (in {tm.time()-t0} seconds)!  Cleaning up...") 
       try:
         if res.success:
           print("\tSupposedly, the least-squares fit was successful")
           chisq = np.sum(self._abs_chisqfunc(res.x))
-          self.clouds = self._abs_unpack(res.x)
+          clouds = copy.deepcopy(self._chisqfunc_clouds)
         else:
-          print("\tSomething barfed")
+          print("\tSomething barfed with the least-squares fit")
+          input("Paused")
       except AttributeError:
         if self.mypars.mcmin:
-          self.clouds = mcminimize_clouds
-      print(f"   Chi^2 = {chisq}")
+          clouds = mcminimize_clouds
+      print("\t","#"*20)
+      print(f"\tChi^2 = {chisq} vs previous Chi^2 = {oldchisq}")
       # Was adding this cloud a statistically significant improvement in the fit?
       # We need to run F-test
       dof = 0
       for i in range(self.mypars.anum.size):
         velocity_mask = (self.obsvel[i,:] > self.velocity[0]) & (self.obsvel[i,:] < self.velocity[-1])
         dof += np.sum(velocity_mask)
-      dof -= 7 * len(self.clouds)
+      dof -= 7 * len(clouds)
       old_dof = dof - 7
-      if self.mypars.mcmin:
-        F_stat = (oldchisq / old_dof) / (chisq / dof)
-      else:
-        F_stat = (oldchisq / old_dof) / (res.cost / dof)
+      F_stat = (oldchisq / old_dof) / (chisq / dof)
 
       p_value = Ftest.sf(F_stat, dof, old_dof)
       print(f"\tF-stat = {F_stat} --> probablility that the new and old fits are statistically consistent {p_value}")
       if p_value < self.mypars.F_test_prob or not self.mypars.add_clouds:
         print("\t\tKEEPING NEW FIT!")
-        clouds = self._abs_unpack(x)
-        self._abs_write_clouds(clouds)
+        self.clouds = copy.deepcopy(clouds)
+        self._abs_write_clouds(self.clouds)
         self.reset_observer()
         if not self.mypars.mcmin:
           chisq = np.sum(self._abs_chisq(*self._calculate_absorbed_flux_gaussleg(self.clouds)
@@ -1196,23 +1234,16 @@ class Quasar:
         print("\t\tRESETTING BACK TO OLD FIT AND FLAGGING VELOCITY!")
         list_of_bad_velocities = np.append(list_of_bad_velocities.to(u.km/u.s).value,
                                            potential_bad_vel.to(u.km/u.s).value) * (u.km/u.s)
-        xclp = xclp[:-1]
-        yclp = yclp[:-1]
-        zcl  = zcl[:-1]
-        rhoindex = rhoindex[:-1]
-        logrhoscale = logrhoscale[:-1]
-        logrho0 = logrho0[:-1]
-        vcl = vcl[:-1]
-        # reset res to the old fit
-        if oldres is not None:
-          res = oldres.copy()
-        else:
-          res = None
+        clouds = copy.deepcopy(self.clouds)
+        (rcl, zcl, thetacl, logrhoscale, rhoindex, logrho0, logZ, vcl) = self.grab_cloud_pars(clouds)
+        xclp,yclp = self._abs_project_clouds(rcl, zcl, thetacl)
         chisq = oldchisq
   
       # Do we need another cloud?
       if np.max(self.chisq_spec) < self.mypars.maxchi or not self.mypars.add_clouds:
         done = True
+      
+      input("Paused in fitabs for inspection of output. How'd I do?")
 
     return clouds
 
@@ -1245,14 +1276,17 @@ class Quasar:
   def makeclouds(self,
                  xclp, yclp, zcl,
                  rhoindex, logrhoscale, logrho0, logZ,
-                 vcl
+                 vcl,
+                 ntabs = 0
                  ):
     fu = (u.erg / (u.s * u.cm * u.cm * u.Hz))
 
     if xclp.size > 0:
       if self.mypars.verbose:
-        print(f"Computing cloud positions (apparent positions given as ({xclp}, {yclp}, {zcl})....")
-        print(f"\t\twith observer located at r,z = {self.robs}, {self.zobs}")
+        print("\t"*ntabs, 
+              f"Computing cloud positions (apparent positions given as ({xclp}, {yclp}, {zcl})....")
+        print("\t"*ntabs, 
+              f"\t\twith observer located at r,z = {self.robs}, {self.zobs}")
       xcl, ycl = self._abs_deproject_clouds(xclp, yclp, zcl)
       rcl     = np.sqrt(xcl * xcl + ycl * ycl)
       thetacl = np.arctan2(ycl, xcl)
@@ -1260,22 +1294,22 @@ class Quasar:
         thetacl *= u.rad
       thetacl = thetacl.to(u.deg)
 
-      if self.mypars.verbose: print("Making clouds!")
+      if self.mypars.verbose: print("\t"*ntabs, "Making clouds!")
       clouds = []
       ncl    = rcl.size
       for i in range(ncl):
         t0 = tm.time()
         if self.mypars.verbose:
-          print("#" * 50)
-          print(f"\t{i} Making a cloud with the following parameters: xclp = {xclp[i]} yclp = {yclp[i]}")
-          print("\t"*7 + f"--> xcl = {xcl[i]:.3f}   ycl = {ycl[i]:.3f} zcl={zcl[i]:.3f}")
-          print("\t"*7 + f"              --> r = {rcl[i]:.3f}  theta = {thetacl[i]:.3f}")
-          print("\t"*7 + f"rhoindex = {rhoindex[i]}  logrhoscale = {logrhoscale[i]} logrho0 = {logrho0[i]}")
-          print("\t"*7 + f"log Z = {logZ[i]}  vcl_los = {vcl[i]}")
+          print("\t"*ntabs, "#" * 50)
+          print("\t"*ntabs, f"\t{i} Making a cloud with the following parameters: xclp = {xclp[i]} yclp = {yclp[i]}")
+          print("\t"*ntabs, "\t"*7 + f"--> xcl = {xcl[i]:.3f}   ycl = {ycl[i]:.3f} zcl={zcl[i]:.3f}")
+          print("\t"*ntabs, "\t"*7 + f"              --> r = {rcl[i]:.3f}  theta = {thetacl[i]:.3f}")
+          print("\t"*ntabs, "\t"*7 + f"rhoindex = {rhoindex[i]}  logrhoscale = {logrhoscale[i]} logrho0 = {logrho0[i]}")
+          print("\t"*ntabs, "\t"*7 + f"log Z = {logZ[i]}  vcl_los = {vcl[i]}")
         clouds.append(AbsCloud(self.mypars.datapath, self.mydisk, self.mycorona, self.myatoms,
                                rcl[i], zcl[i], thetacl[i], rhoindex=rhoindex[i], logrhoscale=logrhoscale[i], logrho0=logrho0[i], logZ=logZ[i], vcl_los=vcl[i]))
         if self.mypars.verbose:
-          print(f"\t{i} Determining ionizing spectrum")
+          print("\t"*ntabs, f"\t{i} Determining ionizing spectrum")
         cloudy_rootname = f"ABS-rho0{logrho0[i]}-index{rhoindex[i]}-scale{logrhoscale[i]}-logZ{logZ[i]}-zcl{zcl[i]}"
         clouds[i].calcionspec(cloudyfileroot = cloudy_rootname, structure_only = True)
         totflux = self._calculate_absorbed_flux_gaussleg(None,
@@ -1286,18 +1320,28 @@ class Quasar:
         try:
           dum = self._spectrum_scale
         except AttributeError:
-          print("\tSetting spectral scale 'cause I'm stupid and can't integrate...")
+          print("\t"*ntabs, "\tSetting spectral scale 'cause I'm stupid and can't integrate...")
           clouds[i].calcionspec(cloudyfileroot = cloudy_rootname, structure_only = False)
+          corona_flux = np.squeeze(self.mycorona.fnu_lamppost(clouds[i].ionspecfreq,rcl[i],zcl[i]))
           self._spectrum_scale = np.max(clouds[i].ionspecfreq*clouds[i].ionspecflux) / np.max(clouds[i].ionspecfreq*totflux)
           while np.any(self._spectrum_scale * totflux > clouds[i].ionspecflux):
             self._spectrum_scale *= 0.999
+          print("\t"*ntabs, f"\t\tScale set to {self._spectrum_scale}")
+          #plt.clf()
+          #plt.plot(clouds[i].ionspecfreq, clouds[i].ionspecfreq*clouds[i].ionspecflux, 'b')
+          #plt.plot(clouds[i].ionspecfreq, clouds[i].ionspecfreq*(totflux+corona_flux), 'r')
+          #plt.plot(clouds[i].ionspecfreq, clouds[i].ionspecfreq*(self._spectrum_scale*totflux+corona_flux), 'r--')
+          #plt.xscale('log')
+          #plt.yscale('log')
+          #plt.show(block=True)
+        #self._spectrum_scale = 1
 
         corona_flux = np.squeeze(self.mycorona.fnu_lamppost(clouds[i].ionspecfreq,rcl[i],zcl[i]))
         totflux = self._spectrum_scale * totflux + corona_flux
         clouds[i].ionspecflux = np.where(totflux < 1.0e-100 * fu, 1.0e-100 * fu, totflux)
 
         if self.mypars.verbose:
-          print(f"\t{i} Resolving ionization structure {self.mypars.cloudypath}")
+          print("\t"*ntabs, f"\t{i} Resolving ionization structure {self.mypars.cloudypath}")
         # This is for creating clouds[i].radius, clouds[i].density, clouds[i].temperature, clouds[i].iondensity
         clouds[i].getcloudy(self.mypars.cloudypath, 
                             verbose = self.mypars.verbose, 
@@ -1310,20 +1354,20 @@ class Quasar:
         try:
           dum = self.cheb_log_ion_parm_list
         except AttributeError:
-          print("\t\tOOPS - FORGOT TO READ CHEBYSHEV TABLES...")
+          print("\t"*ntabs, "\t\tOOPS - FORGOT TO READ CHEBYSHEV TABLES...")
           self._read_cheb_files()
 
         if self.cheb_log_ion_parm_list.size > 0:
           lnmin = np.min(self.cheb_log_ion_parm_list)
           lnmax = np.max(self.cheb_log_ion_parm_list)
         else:
-          print("\t\tOOPS - CHEBYSHEV TABLES DON'T EXIST...")
+          print("\t"*ntabs, "\t\tOOPS - CHEBYSHEV TABLES DON'T EXIST...")
           lnmin = np.min(log_ion_parm) + 10.0
           lnmax = np.max(log_ion_parm) - 10.0
 
         # If we have ionization parameters outside of the Chebyshev range, run Cloudy and expand the range
         if np.any(log_ion_parm > lnmax) or np.any(log_ion_parm < lnmin):
-          prtstr = f"\t\tNeed ionization parameter range ({np.min(log_ion_parm)}, {np.max(log_ion_parm)})"
+          prtstr = "\t"*ntabs + f"\t\tNeed ionization parameter range ({np.min(log_ion_parm)}, {np.max(log_ion_parm)})"
           prtstr += f" which is outside the range ({lnmin},{lnmax})"
           print(prtstr)
           clouds[i].getcloudy(self.mypars.cloudypath, 
@@ -1359,14 +1403,14 @@ class Quasar:
             clouds[i].iondensity[sdx,iondx] = clouds[i].density[sdx] * np.power(10.0,logionfrac)
 
           if not np.all(np.isfinite(clouds[i].iondensity)):
-            print("ERROR IN GETTING ION DENSITIES:")
-            print(f"logionfrac = {logionfrac}")
-            print(f"cloud density = {clouds[i].density}")
-            print(f"cloud ion density = {clouds[i].iondensity}")
+            print("\t"*ntabs, "ERROR IN GETTING ION DENSITIES:")
+            print("\t"*ntabs, f"logionfrac = {logionfrac}")
+            print("\t"*ntabs, f"cloud density = {clouds[i].density}")
+            print("\t"*ntabs, f"cloud ion density = {clouds[i].iondensity}")
             input("Stopped in quasar.makeclouds")
 
         if self.mypars.verbose:
-          print(f"\t{i} Cloud took {tm.time()-t0} s")
+          print("\t"*ntabs, f"\t{i} Cloud took {tm.time()-t0} s")
 
     else:
       clouds = None
