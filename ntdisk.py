@@ -234,24 +234,93 @@ class ntdisk:
                        ):
         fu = u.erg / (u.s * u.cm * u.cm * u.Hz)
         ntr = np.int16(self.ntheta[r])
+        fluxrt  = np.zeros((frequency.size,ntr,self.robs.size)) * fu # shape is (frequency.size,ntr,self.robs.size).. duh
 
-        theta1D = np.linspace(0,
-                              2.0 * np.pi,
-                              ntr)
-        theta2D = np.broadcast_to(theta1D,
-                                  (self.robs.size,ntr)
-                                  ).T
+        robs_vec = np.array([self.robs * np.cos(self.thetaobs),
+                             self.robs * np.sin(self.thetaobs),
+                             self.zobs
+                             ]
+                            ).reshape((3,self.robs.size)) # shape (3,self.robs.size)
+
+        thetadisk = np.linspace(0., 2.0 * np.pi, ntr)
         dtheta      = 2.0 * np.pi / self.ntheta[r]
+
+        rdisk_vec = np.array([self.rstar[r] * np.cos(thetadisk),
+                              self.rstar[r] * np.sin(thetadisk),
+                              self.zt1[r] * np.ones(thetadisk.shape)
+                              ]) # shape (3,ntr)
+
+        gradZ_vec = np.array([-self.dzdr[r] * np.cos(thetadisk),
+                              -self.dzdr[r] * np.sin(thetadisk),
+                              np.ones(ntr)]
+                              ) # shape (3,ntr)
+        gradZmag = np.sqrt(np.sum(gradZ_vec*gradZ_vec, axis=0)) # shape (ntr,)
+
+        try:
+            R_vec = robs_vec[:,None,:] - rdisk_vec[:,:,None] # shape (3,ntr,self.robs.size)
+        except:
+            print("0 ",robs_vec.shape)
+            print("1 ",rdisk_vec.shape)
+            input("Paused")
+        self.Rmag = np.sqrt(np.sum(R_vec*R_vec, axis=0)) # shape (ntr,self.robs.size)
+        # Component for posterity
+        self.Rx = R_vec[0,:,:] # shape (ntr,self.robs.size)
+        self.Ry = R_vec[1,:,:] # shape (ntr,self.robs.size)
+        self.Rz = R_vec[2,:,:] # shape (ntr,self.robs.size)
+        self.Rr   = np.sqrt(self.Rx * self.Rx + self.Ry * self.Ry) # shape (ntr,self.robs.size)
+
+        self.cosbeta = np.sum(R_vec * gradZ_vec[:,:,None], axis=0) / (self.Rmag * gradZmag[:,None]) # shape (ntr,self.robs.size)
+        cosbeta_mask = self.cosbeta > 0.0
+
+        # With the doppler shift, we have to figure out what frequencies are being emitted by the patch that are observed at "frequency"
+        # So, we have to unshift the frequency array for each patch
+        disk_velpar_vec = np.array([-np.sin(thetadisk) / self.rstar[r],
+                                    np.cos(thetadisk) / self.rstar[r],
+                                    np.zeros(thetadisk.size)
+                                    ]) # shape (3, ntr)
+        disk_lorentz_fac = 1./np.sqrt(np.sum(disk_velpar_vec*disk_velpar_vec, axis=0))  # shape (ntr,)
+        disk_velpar_dot_Rhat = np.sum(disk_velpar_vec[:,:,None] * R_vec, axis=0) / self.Rmag        # shape (ntr,self.robs.size)
+        doppler_beam_fac = 1. / (disk_lorentz_fac[:,None] * (1.0 - disk_velpar_dot_Rhat))       # shape (ntr,self.robs.size)
+        doppler_unshift_freq = np.outer(frequency,
+                                        np.sqrt((1 + disk_velpar_dot_Rhat) / (1 + disk_velpar_dot_Rhat))
+                                        ).reshape((frequency.size, ntr, self.robs.size)) # shape = (frequency.size, ntr, self.robs.size)
+
+        # Blackbody emitted from the tau=1 surface
+        bb     = BlackBody(temperature=self.tempt1[r])
+
+        Bnu = np.zeros(doppler_unshift_freq.shape) * fu / u.sr
+        Bnu_mask = cosbeta_mask[None,:] & (const.h * doppler_unshift_freq / (const.k_B * self.tempt1[r]) < 670.74) # This is to prevent underflows... 670.74 was just determined through trial and error
+        Bnu[Bnu_mask] = bb(doppler_unshift_freq[Bnu_mask]) # Emitted at doppler_unshift_freq, observed at gaussleg_freq
+
+        fluxrtnu = np.zeros(Bnu.shape) * fu
+        fluxrtnu[:,cosbeta_mask] = (doppler_beam_fac[cosbeta_mask]**3) * (Bnu[:,cosbeta_mask] * u.sr) * self.cosbeta[cosbeta_mask] * self.rstar[r]  * self.deltar[r] * dtheta / self.Rmag[cosbeta_mask]**2
+
+        return fluxrtnu
+
+        #theta1D = np.linspace(0,
+        #                      2.0 * np.pi,
+        #                      ntr)
+        #theta2D = np.broadcast_to(theta1D,
+        #                          (self.robs.size,ntr)
+        #                          ).T
+
+        #(gradZx,gradZy,gradZz) = (-self.dzdr[r] * np.cos(theta1D),
+        #                          -self.dzdr[r] * np.sin(theta1D),
+        #                          np.ones(ntr))
+        #gradZr     = np.sqrt(gradZx*gradZx + gradZy*gradZy)
+        #gradZmag   = np.sqrt(gradZr*gradZr + gradZz*gradZz)
+
         # R are the vectors from the disk patch to the observer(s) located at (r=self.robs,theta=0 deg,z=self.zobs) [This is the xz plane]
         # The disk patch is located at (r=self.rstar[self.rref],theta=theta,z=self.zt1[self.rref])
         # Rx, Ry, Rz, Rr, and Rmag will have shape (ntr,self.robs.size) and in terms of self.rg
         # Rhat should have shape (ntr,self.robs.size,3)
         #print(f"ntdisk.fnudiskannulus:     self.robs.shape = {self.robs.shape}    self.thetaobs.shape = {self.thetaobs.shape}   ntr = {ntr}   self.robs.size = {self.robs.size}")
-        self.Rx   = np.broadcast_to(self.robs * np.cos(self.thetaobs), (ntr,self.robs.size)) - self.rstar[r] * np.cos(theta2D)
-        self.Ry   = np.broadcast_to(self.robs * np.sin(self.thetaobs), (ntr,self.robs.size)) - self.rstar[r] * np.sin(theta2D)
-        self.Rz   = np.broadcast_to(self.zobs - self.zt1[r], (ntr,self.robs.size))
-        self.Rr   = np.sqrt(self.Rx * self.Rx + self.Ry * self.Ry)
-        self.Rmag = np.sqrt(self.Rr * self.Rr + self.Rz * self.Rz)
+        #self.Rx   = np.broadcast_to(self.robs * np.cos(self.thetaobs), (ntr,self.robs.size)) - self.rstar[r] * np.cos(theta2D)
+        #self.Ry   = np.broadcast_to(self.robs * np.sin(self.thetaobs), (ntr,self.robs.size)) - self.rstar[r] * np.sin(theta2D)
+        #self.Rz   = np.broadcast_to(self.zobs - self.zt1[r], (ntr,self.robs.size))
+
+        #self.Rr   = np.sqrt(self.Rx * self.Rx + self.Ry * self.Ry)
+        #self.Rmag = np.sqrt(self.Rr * self.Rr + self.Rz * self.Rz)
 
         # Example from numpy:
         #   a = np.ones((1, 2, 3))
@@ -259,61 +328,51 @@ class ntdisk:
         #   (2, 1, 3)
         #
         # [self.Rx,self.Ry,self.Rz] has a shape of .... (3,ntr,self.robs.size)
-        #
-        self.Rhat = np.transpose([self.Rx,self.Ry,self.Rz], (1,2,0)) / np.transpose(np.broadcast_to(self.Rmag,(3,ntr,self.robs.size)), (1,2,0))
+        # self.Rhat has shape (ntr,self.robs.size,3)
+        #self.Rhat = np.transpose([self.Rx,self.Ry,self.Rz], (1,2,0)) / np.transpose(np.broadcast_to(self.Rmag,(3,ntr,self.robs.size)), (1,2,0))
 
-        # shape is (ntr,)
-        (gradzx,gradzy,gradzz) = (-self.dzdr[r] * np.cos(theta1D),
-                                  -self.dzdr[r] * np.sin(theta1D),
-                                  np.ones(ntr))
-        gradzr     = np.sqrt(gradzx*gradzx + gradzy*gradzy)
-        gradzmag   = np.sqrt(gradzr*gradzr + gradzz*gradzz)
-
-        fluxrt  = np.zeros((frequency.size,ntr,self.robs.size)) * fu # shape is (frequency.size,ntr,self.robs.size).. duh
-        # shape is (ntr,self.robs.size)
-        gradZhat = np.transpose(np.broadcast_to([gradzx,gradzy,gradzz], 
-                                                (self.robs.size,3,ntr)),
-                                (2,0,1)
-                                ) / gradzmag[:,None,None] #  np.transpose(np.broadcast_to(gradzmag, (self.robs.size,ntr)), (2,0,1))
-        self.cosbeta = np.sum(self.Rhat * gradZhat , axis=2)  # shape is (ntr,self.robs.size)
+        #self.cosbeta = np.sum(self.Rhat * gradZhat , axis=2)  # shape is (ntr,self.robs.size)
         # shape should be (ntr,self.robs.size)
-        cbdx  = np.extract(self.cosbeta > 0.0, range(self.cosbeta.size))
-        cbdxo = np.int16(np.mod(cbdx, self.robs.size))
-        cbdxt = np.int16((cbdx-cbdxo)/self.robs.size)
+        #cbdx  = np.extract(self.cosbeta > 0.0, range(self.cosbeta.size))
+        #cbdxo = np.int16(np.mod(cbdx, self.robs.size))
+        #cbdxt = np.int16((cbdx-cbdxo)/self.robs.size)
 
-        # Blackbody emitted from the tau=1 surface
-        bb     = BlackBody(temperature=self.tempt1[r])
         # Doppler shift:
-        betamag = np.sqrt(1.0/self.rstar[r]) # Rotational motion of disk - in (theta+90 deg)-hat direction; Need dot product with R-hat... betamag is a scalar
-        # As a vector, beta = betamag (-sin theta i-hat + cos theta j-hat)
-        # theta2D has shape (ntr,self.robs.size). betamag is scalar.
-        betavec = betamag * np.transpose([-np.sin(theta2D), np.cos(theta2D), np.zeros(theta2D.shape)], (1,2,0)) # betavec had shape (self.ntheta[r],3)
+        #velpar_mag = np.sqrt(1.0/self.rstar[r]) # Rotational motion of disk - in (theta+90 deg)-hat direction; Need dot product with R-hat... velpar_mag is a scalar
+        # As a vector, velpar = velpar_mag (-sin theta i-hat + cos theta j-hat)
+        # theta2D has shape (ntr,self.robs.size). velpar_mag is scalar.
 
-        betadotrhat = np.sum(betavec * self.Rhat, axis=2) # shape (self.ntheta[r],self.robs.shape)
+        #velpar_vec = velpar_mag * np.transpose(np.array([-np.sin(theta1D), np.cos(theta1D), np.zeros(theta1D.shape)]), (1,0)) #shape (ntr,3)
+
+
+        #betadotrhat = np.sum(velpar_vec * self.Rhat, axis=2) # shape (self.ntheta[r],self.robs.shape)
+        #velpar_dot_Rhat = np.sum(velpar_vec[:,None,:] * self.Rhat, axis=2)
 
         # Relativistic beaming:
-        gamma    = 1.0/np.sqrt(1- betamag * betamag) # scalar
+        #gamma    = 1.0/np.sqrt(1- velpar_mag * velpar_mag) # scalar
 
-        t0 = tm.time()
-        for i in np.unique(cbdxo):
-            idx = np.extract(cbdxo == i, cbdxt)
-            freqprime = frequency.reshape(frequency.size,1) @ (np.sqrt((1 + betadotrhat[idx,i]) / (1 - betadotrhat[idx,i]))).reshape(1,idx.size)   # shape (frequency.size,idx.size)
+        #t0 = tm.time()
+        #for i in np.unique(cbdxo):
+        #    idx = np.extract(cbdxo == i, cbdxt)
+        #    #freqprime = frequency.reshape(frequency.size,1) @ (np.sqrt((1 + betadotrhat[idx,i]) / (1 - betadotrhat[idx,i]))).reshape(1,idx.size)   # shape (frequency.size,idx.size)
+        #    freqprime = frequency.reshape(frequency.size,1) @ (np.sqrt((1 + velpar_dot_Rhat[idx,i]) / (1 - velpar_dot_Rhat[idx,i]))).reshape(1,idx.size)   # shape (frequency.size,idx.size)
 
-            # Relativistic beaming:
-            costheta = betadotrhat[idx,i] / betamag # shape (idx.size,)
-            D        = 1./(gamma * (1. - betamag * costheta))   # shape (idx.size,)
+        #    # Relativistic beaming:
+        #    #costheta = betadotrhat[idx,i] / velpar_mag # shape (idx.size,)
+        #    costheta = velpar_dot_Rhat[idx,i] / velpar_mag # shape (idx.size,)
+        #    D        = 1./(gamma * (1. - velpar_mag * costheta))   # shape (idx.size,)
 
-            # want to return shape (frequency.size,ntr,self.robs.size)
-            cosbetarm2 = np.broadcast_to(self.cosbeta[idx,i] / self.Rmag[idx,i]**2,
-                                         (frequency.size,idx.size))
+        #    # want to return shape (frequency.size,ntr,self.robs.size)
+        #    cosbetarm2 = np.broadcast_to(self.cosbeta[idx,i] / self.Rmag[idx,i]**2,
+        #                                 (frequency.size,idx.size))
 
-            bb_eval = np.zeros(freqprime.shape) * (fu / u.sr)
-            bb_mask = const.h * freqprime / (const.k_B * self.tempt1[r]) < 670.74 # This is to prevent underflows
-            bb_eval[bb_mask] = bb(freqprime[bb_mask])
+        #    bb_eval = np.zeros(freqprime.shape) * (fu / u.sr)
+        #    bb_mask = const.h * freqprime / (const.k_B * self.tempt1[r]) < 670.74 # This is to prevent underflows
+        #    bb_eval[bb_mask] = bb(freqprime[bb_mask])
 
-            fluxrt[:,idx,i]  = self.rstar[r] * self.deltar[r] * dtheta * (D**3) * cosbetarm2 * u.sr * bb_eval
+        #    fluxrt[:,idx,i]  = self.rstar[r] * self.deltar[r] * dtheta * (D**3) * cosbetarm2 * u.sr * bb_eval
 
-        return fluxrt
+        #return fluxrt
 
     ######################################################
     def makedisk(self):
