@@ -271,6 +271,9 @@ class Quasar:
     (totflux, unabsflux) = self._calculate_absorbed_flux_gaussleg(clouds, lograd = True)
     chisq = np.sum(self._abs_chisq(totflux, unabsflux))
     self.bestfit = totflux/unabsflux
+
+    print('\n')
+    print('\t\t' + '#'*20)
     self.print_clouds(clouds, ntabs=2)
     try:
       print(f"\t\tChi^2 = {chisq}  ({tm.time() * u.s - self._abscall_t0:e} since last callback)")
@@ -283,7 +286,9 @@ class Quasar:
 
     # Write out clouds to a file so that we can pick up where we left off...
     self._abs_write_clouds(clouds)
-
+    print('\t\t' + '#'*20)
+    print('\n')
+ 
   #######################################################################################
   # Compute the chisq, summing across all max(f-lambda) species that are covered in the velocity range specified
   def _abs_chisq(self,
@@ -325,7 +330,7 @@ class Quasar:
     # Observer coordinates (reset here for sanity)
     self.reset_observer()
 
-    (totflux, unabsflux) = self._calculate_absorbed_flux_gaussleg(self._chisqfunc_clouds)
+    (totflux, unabsflux) = self._calculate_absorbed_flux_gaussleg(self._chisqfunc_clouds, noplot=True)
     chisq_spec = self._abs_chisq(totflux, unabsflux)
 
     return chisq_spec.flatten()
@@ -444,9 +449,9 @@ class Quasar:
       if newchisq < chisq:
         print(f"\n\tIMPROVED FIT! iterations remaining: {niter}    chisq = {chisq} - {chisq - newchisq}\n")
         better_clouds = copy.deepcopy(potential_clouds)
-        chisq         = newchisq
-        totflux       = newtotflux
-        unabsflux     = newunabsflux
+        chisq         = np.copy(newchisq)
+        totflux       = np.copy(newtotflux)
+        unabsflux     = np.copy(newunabsflux)
         self.bestfit  = totflux/unabsflux
 
         if newchisq < chisq-1.0:
@@ -590,7 +595,7 @@ class Quasar:
                  self.normobsflux + tdx,
                  c=self.plot_code[tdx],
                  label=f"{self.myatoms.specstr[myatoms_index]} "+r"$\lambda$"+f"{self.myatoms.wave[myatoms_index]:.3f}")
-      except AttributeError:
+      except:
         pass
       #----------------------------------------------------------
       try:
@@ -599,22 +604,22 @@ class Quasar:
                    self.cld_totflux[:,clddx]/unabsflux + tdx,
                    self.plot_code[tdx]+":"
                   )
-      except AttributeError:
+      except:
         pass
       #----------------------------------------------------------
       try:
         plt.plot(self.species_velocity[:,myatoms_index],
                  totflux/unabsflux + tdx,
                  self.plot_code[tdx])
-      except IndexError:
-        print("Oops... totflux don't have 'nuff dimensions")
+      except:
+        pass
       #----------------------------------------------------------
       try:
         if self.bestfit is not None:
           plt.plot(self.species_velocity[:,myatoms_index],
                    self.bestfit + tdx,
                    f"{self.plot_code[tdx]}--")
-      except AttributeError:
+      except:
         pass
 
     if vcl.size > 0:
@@ -627,9 +632,12 @@ class Quasar:
     plt.legend()
 
     title_str  = self.mypars.qname + f" zqso = {self.mypars.zqso} "
-    chisq_spec = self._abs_chisq(totflux, unabsflux)
-    chisq      = np.sum(chisq_spec)
-    title_str += r"$\chi^2 = $" + f"{chisq:.3f}"
+    try:
+      chisq_spec = self._abs_chisq(totflux, unabsflux)
+      chisq      = np.sum(chisq_spec)
+      title_str += r"$\chi^2 = $" + f"{chisq:.3f}"
+    except:
+      pass
 
     plt.title(title_str)
     plt.xlim([self.velocity[0].to(u.km/u.s).value, self.velocity[-1].to(u.km/u.s).value])
@@ -741,16 +749,22 @@ class Quasar:
     ionfrac = np.zeros(cloud.iondensity.shape)
     for i in range(self.myatoms.nion):
       logZdum = cloud.logZ
-      if self.myatoms.anum[self.myatoms.idx[i]] == 1:
+      if self.myatoms.anum[self.myatoms.idx[i]] < 3:
         logZdum = 0.0
       logelemabund = self.myatoms.abund[self.myatoms.idx[i]]-12+logZdum
       ionfrac[:,i] = cloud.iondensity[:,i] / (cloud.density * np.power(10.0, logelemabund))
+
     if self.cheb_ionfrac_list.size > 0:
       self.cheb_ionfrac_list = np.append(self.cheb_ionfrac_list, ionfrac, axis=0)
+      self.cheb_temperature_list = np.append(self.cheb_temperature_list, cloud.temperature.to(u.K).value)
     else:
       self.cheb_ionfrac_list = np.copy(ionfrac)
       self.cheb_degree = np.ones(self.myatoms.idx.size, dtype=np.int16)
       self.cheb_coeff_list = np.zeros((self.myatoms.idx.size,1))
+
+      self.cheb_temperature_list = np.copy(cloud.temperature.to(u.K).value)
+      self.cheb_log_temperature_degree = 1
+      self.cheb_log_temperature_coeff = np.zeros(self.cheb_log_temperature_degree)
 
     lnmin = np.min(self.cheb_log_ion_parm_list)
     lnmax = np.max(self.cheb_log_ion_parm_list)
@@ -791,12 +805,59 @@ class Quasar:
             self.cheb_coeff_list[i,:] = 0.0
           self.cheb_coeff_list[i,:coeff.size] = np.copy(coeff)
 
+
+    done = False
+    oldchisq = 9.99e+99
+    olddeg = self.cheb_log_temperature_degree
+    while not done:
+      coeff,res = chebyshev.chebfit(xnorm,np.log10(self.cheb_temperature_list), self.cheb_log_temperature_degree, full=True)
+      if res[0].size > 0:
+        fstat = (oldchisq / olddeg )  / (np.squeeze(res[0]) / self.cheb_log_temperature_degree)
+        p_value = Ftest.sf(fstat, olddeg, self.cheb_log_temperature_degree)
+        if p_value < 0.48:
+          self.cheb_log_temperature_degree += 1
+          done = False
+        else:
+          self.cheb_log_temperature_degree = np.max(np.array([1, self.cheb_log_temperature_degree-1]))
+          coeff,res = chebyshev.chebfit(xnorm,np.log10(self.cheb_temperature_list), self.cheb_log_temperature_degree, full=True)
+          done = True
+      else:
+        self.cheb_log_temperature_degree = np.max(np.array([1, self.cheb_log_temperature_degree-1]))
+        coeff,res = chebyshev.chebfit(xnorm,np.log10(self.cheb_temperature_list), self.cheb_log_temperature_degree, full=True)
+        done = True
+      olddeg = self.cheb_log_temperature_degree
+      oldchisq = np.squeeze(res[0])
+
+      self.cheb_log_temperature_coeff = np.copy(coeff)
+
+
+    sort_index = np.argsort(self.cheb_log_ion_parm_list)
+    self.cheb_log_ion_parm_list = self.cheb_log_ion_parm_list[sort_index]
+    self.cheb_ionfrac_list = self.cheb_ionfrac_list[sort_index,:]
+    self.cheb_temperature_list = self.cheb_temperature_list[sort_index]
+
+    self.cheb_dlog_ion_parm_list = np.zeros(self.cheb_log_ion_parm_list.size)
+    self.cheb_dlog_ion_parm_list[1:-1] = 0.5 * (self.cheb_log_ion_parm_list[2:] - self.cheb_log_ion_parm_list[:-2])
+    self.cheb_dlog_ion_parm_list[0] = self.cheb_dlog_ion_parm_list[1]
+    self.cheb_dlog_ion_parm_list[-1] = self.cheb_dlog_ion_parm_list[-2]
+
+
     chebfile  = self.mypars.datapath+f"/Cloudy_runs/Sbh{self.mydisk.sbh}-MBH{np.log10(self.mydisk.mbh / const.M_sun):.2f}"
     chebfile += f"-Mdot{(self.mydisk.mdot/(const.M_sun/u.year)).decompose()}-alpha{self.mydisk.alpha}_ionfracs_lox{self.myatoms.minlox}.fits"
-    datatab = Table(data=[self.cheb_log_ion_parm_list, self.cheb_ionfrac_list], names=["log_ion_parm_list", "ionfrac_list"])
-    datatab.write(chebfile, format="fits", overwrite=True)
+    datatab = Table(data=[self.cheb_log_ion_parm_list, self.cheb_ionfrac_list, self.cheb_temperature_list], names=["log_ion_parm_list", "ionfrac_list", "temperature_list"])
+
     datatab2 = Table(data=[self.cheb_degree,self.cheb_coeff_list], names=["DEGREE","COEFFS"])
+
+    try:
+      datatab3 = Table(data=[self.cheb_log_temperature_coeff], names=["COEFFS"])
+    except TypeError:
+      print(self.cheb_log_temperature_degree)
+      print(self.cheb_log_temperature_coeff)
+      input("Making this table barfed...")
+
+    datatab.write( chebfile, format="fits", overwrite=True)
     datatab2.write(chebfile, format="fits", append=True)
+    datatab3.write(chebfile, format="fits", append=True)
 
   #######################################################################################
   def _build_modwave(self,
@@ -905,7 +966,7 @@ class Quasar:
                                      lograd
                                     )
                                    )
-          dumstr = "sightline"
+          dumstr = "sightlines"
         else:
           thetadisk = np.pi * (gaussleg_y_theta + 1.) # Azimuthal angle
       
@@ -920,7 +981,7 @@ class Quasar:
                                    lograd
                                    )
                                   )
-          dumstr = "annulus"
+          dumstr = "annuli"
 
       if self.mypars.verbose:
         print(f"\t\tIntegrating across disk with at most {self.mypars.nproc} processors...({tm.time()-t0})")
@@ -953,10 +1014,11 @@ class Quasar:
           except ValueError:
             min_impact_parameters_all_sightlines = np.array([min_impact_parameter])
         
-        if not noplot and plot_nit % 10 == 0:
+        if not noplot and plot_nit % 10 < 2:
           self._abs_plot(totflux, unabsflux,
                          vcl = self.grab_cloud_pars(clouds)[-1] # = vcl
                          )
+          plt.pause(0.001)
           plot_nit += 1
  
 
@@ -983,6 +1045,12 @@ class Quasar:
           if np.any(scale*np.array([self.mypars.gaussleg_nr, self.mypars.gaussleg_ntheta]) > 1000):
             print(f"\t\t\tThis is would be too expensive - bailing")
             done = True
+
+    if clouds is not None:
+      self._abs_plot(totflux, unabsflux,
+                     vcl = self.grab_cloud_pars(clouds)[-1] # = vcl
+                     )
+      plt.pause(0.001)
 
     return totflux,unabsflux # shape = wavelength.shape
 
@@ -1077,21 +1145,37 @@ class Quasar:
     if os.path.exists(chebfile):
       datatab1 = Table.read(chebfile, hdu=1)
       datatab2 = Table.read(chebfile, hdu=2)
+      datatab3 = Table.read(chebfile, hdu=3)
 
       self.cheb_log_ion_parm_list = datatab1["log_ion_parm_list"]
       self.cheb_ionfrac_list      = datatab1["ionfrac_list"]
+      self.cheb_temperature_list  = datatab1["temperature_list"]
       self.cheb_coeff_list        = datatab2["COEFFS"]
       self.cheb_degree            = datatab2["DEGREE"]
+      self.cheb_log_temperature_coeff = datatab3["COEFFS"]
+      self.cheb_log_temperature_degree = self.cheb_log_temperature_coeff.size-1
+
+      sort_index = np.argsort(self.cheb_log_ion_parm_list)
+      self.cheb_log_ion_parm_list = self.cheb_log_ion_parm_list[sort_index]
+      self.cheb_ionfrac_list = self.cheb_ionfrac_list[sort_index,:]
+      self.cheb_temperature_list = self.cheb_temperature_list[sort_index]
+
+      self.cheb_dlog_ion_parm_list = np.zeros(self.cheb_log_ion_parm_list.size)
+      self.cheb_dlog_ion_parm_list[1:-1] = 0.5 * (self.cheb_log_ion_parm_list[2:] - self.cheb_log_ion_parm_list[:-2])
+      self.cheb_dlog_ion_parm_list[0] = self.cheb_dlog_ion_parm_list[1]
+      self.cheb_dlog_ion_parm_list[-1] = self.cheb_dlog_ion_parm_list[-2]
     else:
-      self.cheb_log_ion_parm_list = np.array([])
-      self.cheb_ionfrac_list      = np.array([])
-      self.cheb_coeff_list        = np.array([])
-      self.cheb_degree            = np.array([])
-      
+      self.cheb_log_ion_parm_list  = np.array([])
+      self.cheb_ionfrac_list       = np.array([])
+      self.cheb_temperature_list   = np.array([])
+      self.cheb_coeff_list         = np.array([])
+      self.cheb_degree             = np.array([])
+      self.cheb_log_temperature_coeff  = np.array([])
+      self.cheb_log_temperature_degree = 0
+      self.cheb_dlog_ion_parm_list = np.array([])
 
   #######################################################################################
   def fitabs(self):
-    plt.close('all')
     plt.ion()
 
     fu = (u.erg / (u.s * u.cm * u.cm * u.Hz))
@@ -1118,6 +1202,7 @@ class Quasar:
     res = None
     oldres = None
     done = False
+    minfirst = self.mypars.minfirst
     while not done:
       print("Determining what velocity to put a new component...")
       tot_chisq_spec = np.zeros(self.velocity.size)
@@ -1130,14 +1215,15 @@ class Quasar:
 
       potential_bad_vel = np.extract(tot_chisq_spec == np.max(tot_chisq_spec), self.velocity)[0]
 
-      if self.mypars.add_clouds:
+      if self.mypars.add_clouds and not minfirst:
         print(f"\t... and adding it at {potential_bad_vel} with badness {np.max(tot_chisq_spec)}")
         try:
           xclp        = np.append(                  xclp, 0.0                                                                     )
           yclp        = np.append(                  yclp, 0.0                                                                     )
           rhoindex    = np.append(              rhoindex, 1.0 + 1.5 * np.random.rand(1)                                           )
-          logrhoscale = np.append(           logrhoscale, 2.0 + 2.5 * np.random.rand(1) + np.log10(self.mydisk.rg.to(u.cm).value) )
-          logrho0     = np.append(               logrho0, 2.0 + 1.5 * np.random.rand(1)                                           )
+          logrho0     = np.append(               logrho0, 2.5 + 1.5 * np.random.rand(1)                                           )
+          #logrhoscale = np.append(           logrhoscale, 0.5 + 2.5 * np.random.rand(1) + np.log10(self.mydisk.rg.to(u.cm).value) )
+          logrhoscale = np.append(           logrhoscale, 19.0 - logrho0[-1] )
           logZ        = np.append(                  logZ, 0.0                                                                     )
           vcl         = np.append(vcl.to(u.km/u.s).value, potential_bad_vel.to(u.km/u.s).value) * (u.km/u.s)
 
@@ -1154,8 +1240,9 @@ class Quasar:
           vcl         = np.array([potential_bad_vel.to(u.km/u.s).value]) * (u.km/u.s)
 
           rhoindex    = 1.0 + 1.5 * np.random.rand(1)
-          logrhoscale = 2.0 + 2.5 * np.random.rand(1) + np.log10(self.mydisk.rg.to(u.cm).value)
-          logrho0     = 2.0 + 1.5 * np.random.rand(1)
+          logrho0     = 2.5 + 1.5 * np.random.rand(1)
+          #logrhoscale = 0.5 + 2.5 * np.random.rand(1) + np.log10(self.mydisk.rg.to(u.cm).value)
+          logrhoscale = 19.0 - logrho0
 
           #zcl = (10.0**(2.6 + logrhoscale) * u.cm / self.mydisk.rg).decompose()
           zcl = (np.random.rand(1) * 0.5 * u.kpc / self.mydisk.rg).decompose()
@@ -1192,7 +1279,8 @@ class Quasar:
                             self._abs_pack(clouds),
                             bounds=self._abs_bounds(clouds),
                             jac="2-point",
-                            callback=self._abs_callback
+                            callback=self._abs_callback,
+                            diff_step = 0.001
                             )
 
       print(f"Optimized (in {tm.time()-t0} seconds)!  Cleaning up...") 
@@ -1221,8 +1309,9 @@ class Quasar:
 
       p_value = Ftest.sf(F_stat, dof, old_dof)
       print(f"\tF-stat = {F_stat} --> probablility that the new and old fits are statistically consistent {p_value}")
-      if p_value < self.mypars.F_test_prob or not self.mypars.add_clouds:
+      if p_value < self.mypars.F_test_prob or not self.mypars.add_clouds or minfirst:
         print("\t\tKEEPING NEW FIT!")
+        minfirst = False
         self.clouds = copy.deepcopy(clouds)
         self._abs_write_clouds(self.clouds)
         self.reset_observer()
@@ -1243,7 +1332,7 @@ class Quasar:
       if np.max(self.chisq_spec) < self.mypars.maxchi or not self.mypars.add_clouds:
         done = True
       
-      input("Paused in fitabs for inspection of output. How'd I do?")
+      #input("Paused in fitabs for inspection of output. How'd I do?")
 
     return clouds
 
@@ -1315,7 +1404,7 @@ class Quasar:
         totflux = self._calculate_absorbed_flux_gaussleg(None,
                                                          robs = rcl[i], thetaobs = thetacl[i], zobs = zcl[i],
                                                          wavelength = clouds[i].ionspecfreq.to(u.Angstrom, equivalencies=u.spectral()),
-                                                         lograd = True, noplot = True, verbose = verbose, nproc = nproc
+                                                         lograd = True, noplot = True
                                                          )[0]
         try:
           dum = self._spectrum_scale
@@ -1327,14 +1416,6 @@ class Quasar:
           while np.any(self._spectrum_scale * totflux > clouds[i].ionspecflux):
             self._spectrum_scale *= 0.999
           print("\t"*ntabs, f"\t\tScale set to {self._spectrum_scale}")
-          #plt.clf()
-          #plt.plot(clouds[i].ionspecfreq, clouds[i].ionspecfreq*clouds[i].ionspecflux, 'b')
-          #plt.plot(clouds[i].ionspecfreq, clouds[i].ionspecfreq*(totflux+corona_flux), 'r')
-          #plt.plot(clouds[i].ionspecfreq, clouds[i].ionspecfreq*(self._spectrum_scale*totflux+corona_flux), 'r--')
-          #plt.xscale('log')
-          #plt.yscale('log')
-          #plt.show(block=True)
-        #self._spectrum_scale = 1
 
         corona_flux = np.squeeze(self.mycorona.fnu_lamppost(clouds[i].ionspecfreq,rcl[i],zcl[i]))
         totflux = self._spectrum_scale * totflux + corona_flux
@@ -1342,13 +1423,16 @@ class Quasar:
 
         if self.mypars.verbose:
           print("\t"*ntabs, f"\t{i} Resolving ionization structure {self.mypars.cloudypath}")
-        # This is for creating clouds[i].radius, clouds[i].density, clouds[i].temperature, clouds[i].iondensity
+        # This is for creating clouds[i].radius, clouds[i].density, clouds[i].temperature, clouds[i].iondensity arrays
         clouds[i].getcloudy(self.mypars.cloudypath, 
                             verbose = self.mypars.verbose, 
                             runcloudy = False, 
                             softenning = self.mypars.softenning)
         (lognuFnu, log_ion_parm) = self._calc_ion_parm(clouds[i])
         sdx = np.argsort(log_ion_parm)
+        #if self.mypars.verbose:
+        #  print("\t"*ntabs, f"\t\tLog ionization parameter in range ({np.min(log_ion_parm)}, {np.max(log_ion_parm)})")
+        
 
         # Need to fill the clouds[i].iondensity array
         try:
@@ -1365,11 +1449,33 @@ class Quasar:
           lnmin = np.min(log_ion_parm) + 10.0
           lnmax = np.max(log_ion_parm) - 10.0
 
+        interp_dlog_ion_parm = np.zeros(log_ion_parm.size)
+        try:
+          if self.cheb_log_ion_parm_list.size > 0:
+            interp_dlog_ion_parm = np.interp(log_ion_parm, 
+                                             self.cheb_log_ion_parm_list, 
+                                             self.cheb_dlog_ion_parm_list,
+                                             left = np.max(self.cheb_dlog_ion_parm_list),
+                                             right = np.max(self.cheb_dlog_ion_parm_list)
+                                             )
+        except:
+          pass
+
         # If we have ionization parameters outside of the Chebyshev range, run Cloudy and expand the range
-        if np.any(log_ion_parm > lnmax) or np.any(log_ion_parm < lnmin):
+        target_dlog_ion_parm = 0.1 #np.median(self.cheb_dlog_ion_parm_list) + np.std(self.cheb_dlog_ion_parm_list)
+        if np.any(log_ion_parm > lnmax) or np.any(log_ion_parm < lnmin) or np.any(interp_dlog_ion_parm >  target_dlog_ion_parm):
           prtstr = "\t"*ntabs + f"\t\tNeed ionization parameter range ({np.min(log_ion_parm)}, {np.max(log_ion_parm)})"
-          prtstr += f" which is outside the range ({lnmin},{lnmax})"
           print(prtstr)
+          if np.any(log_ion_parm > lnmax) or np.any(log_ion_parm < lnmin):
+            prtstr = f" \t\t\twhich is outside the range ({lnmin},{lnmax})   ({np.any(log_ion_parm > lnmax)}, {np.any(log_ion_parm < lnmin)})"
+            print(prtstr)
+          if (np.any(log_ion_parm > lnmax) or np.any(log_ion_parm < lnmin)) and np.any(interp_dlog_ion_parm > target_dlog_ion_parm):
+            print("\t\t\t\tand")
+          if np.any(interp_dlog_ion_parm > target_dlog_ion_parm):
+            missing_index = interp_dlog_ion_parm > np.median(self.cheb_dlog_ion_parm_list)
+            prtstr = f"\t\t\twhich is in a gap ({np.min(log_ion_parm[missing_index])}, {np.max(log_ion_parm[missing_index])}), with "
+            prtstr += f"{np.sum(interp_dlog_ion_parm[missing_index] > target_dlog_ion_parm )} bins with > {target_dlog_ion_parm}"
+            print(prtstr)
           clouds[i].getcloudy(self.mypars.cloudypath, 
                               verbose = self.mypars.verbose, 
                               runcloudy = True, 
@@ -1381,6 +1487,8 @@ class Quasar:
           lnmax = np.max(self.cheb_log_ion_parm_list)
         
         xnorm = 2 * (log_ion_parm - lnmin)/(lnmax-lnmin) - 1
+        if self.mypars.verbose:
+          print("\t"*ntabs, f"\t\tChebyshev xnorm in range ({np.min(xnorm)}, {np.max(xnorm)})")
         for iondx in range(self.myatoms.nion):
           ion_parm_mask1 = self.cheb_ionfrac_list[:,iondx] > 0
           if np.any(ion_parm_mask1):
@@ -1409,8 +1517,17 @@ class Quasar:
             print("\t"*ntabs, f"cloud ion density = {clouds[i].iondensity}")
             input("Stopped in quasar.makeclouds")
 
+        clouds[i].temperature = 10.0**chebyshev.chebval(xnorm,
+                                                        self.cheb_log_temperature_coeff
+                                                        ) * u.K
+        if self.mypars.verbose:
+          print("\t"*ntabs, f"\t\tTemperature in range ({np.min(clouds[i].temperature)}, {np.max(clouds[i].temperature)})")
+
+
+
         if self.mypars.verbose:
           print("\t"*ntabs, f"\t{i} Cloud took {tm.time()-t0} s")
+
 
     else:
       clouds = None
@@ -1450,10 +1567,10 @@ class Quasar:
                    clouds,
                    ntabs = 0):
     print("\t" * ntabs + "Absorbing clouds:")
-    print("\t" * ntabs + "        num rcl          zcl          thetacl           rhoindex     rhoscale/rg  logrho0      logZ         vlos")
+    print("\t" * ntabs + "        num rcl          zcl          thetacl           rhoindex     rhoscale/rg  logrho0      logZ         median T     vlos")
     for i in range(len(clouds)):
       prtstr  = "\t" * ntabs + f"\t {i:2d} {clouds[i].rcl:e} {clouds[i].zcl:e} {clouds[i].thetacl:e} {clouds[i].rhoindex:e} "
-      prtstr += f"{(10.0**clouds[i].logrhoscale * u.cm)/self.mydisk.rg:e} {clouds[i].logrho0:e} {clouds[i].logZ:e} {clouds[i].vlos:e}"
+      prtstr += f"{(10.0**clouds[i].logrhoscale * u.cm)/self.mydisk.rg:e} {clouds[i].logrho0:e} {clouds[i].logZ:e} {np.median(clouds[i].temperature):e} {clouds[i].vlos:e}"
       print(prtstr)
 
     return

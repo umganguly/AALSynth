@@ -132,8 +132,9 @@ class AbsCloud:
       # Temperature - scale with density using the ideal gas law, assuming gas pressure balance
       #surfflux = np.sum(self.ionspecflux * self.ionspecdfreq)
       #surftemp = np.power(surfflux / const.sigma_sb, 0.25).decompose()
-      surftemp = (1.4e+6 * u.K) * np.sqrt(1.54e+8 / self.zcl)
-      self.temperature = (self.density[0] * surftemp)  / self.density
+      #surftemp = (1.4e+6 * u.K) * np.sqrt(1.54e+8 / self.zcl)
+      #self.temperature = (self.density[0] * surftemp)  / self.density
+      self.temperature = np.ones(self.density.size) * 100.0 * u.K
 
       # Iondensity - Shape will be (self.depth.size,self.myatoms.nion)
       self.iondensity = np.zeros((self.depth.size,self.myatoms.nion)) * (u.cm**-3)

@@ -7,7 +7,7 @@
 #          -- RL NV COS paper
 # aalsynth -- Add wind modelling
 # AbsCloud -- Clean up, test imports
-#          -- Consider temperature profile of disk (currently hydrostatic, but check Cloudy)
+#          -- Revise criterion for running new Cloudy model (e.g., in between IPs that have been simlated previously)
 #          -- Improve placement of new clouds
 # atomic   -- Clean up, test imports
 # cloudy   -- Clean up, test imports
