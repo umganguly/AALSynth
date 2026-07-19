@@ -303,3 +303,17 @@ class readpars:
          except AttributeError:
             print(f"F_test_prob not set in {inputfile}")
             self.F_test_prob = 0.05
+
+         ###########################################################################
+         print("Display parameters:")
+         try:
+            print(f"Show Geometry? {self.showgeometry}")
+         except AttributeError:
+            print(f"Show Geometry not defined in {inputfile}")
+            self.showgeometry = True
+
+         try:
+            print(f"Interactive? {self.interactive}")
+         except AttributeError:
+            print(f"Interactive not defined in {inputfile}")
+            self.showgeometry = False
