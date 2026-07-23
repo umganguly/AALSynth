@@ -11,7 +11,10 @@ from ntdisk                  import ntdisk
 
 class corona:
     ######################################################
-    def __init__(self, mydisk):
+    def __init__(self, 
+                 mypars,
+                 mydisk):
+        self.mypars = mypars
         self.mydisk = mydisk
 
     ######################################################
@@ -42,7 +45,7 @@ class corona:
             # Determine the 2500A luminosity
             frequency2500 = np.array([((const.c.to(u.Angstrom * u.Hz)) / (2500.0 * u.Angstrom)).value]) * u.Hz
             fnudisk = 0.0 * fu
-            for r in range(self.mydisk.nr):
+            for r in range(self.mypars.nr):
                 fnudisk += np.sum(self.mydisk.fnudiskannulus(frequency2500, r))
             self.Lnu2500A = 4.0 * np.pi * (self.lamp_z * self.mydisk.rg)**2 * fnudisk
 
@@ -59,8 +62,8 @@ class corona:
             print(prtstr)
 
             # Shape of the hard X-ray spectrum, adapted from Laha et al. (2025, Frontiers in Astronomy and Space Sciences)
-            mdotedd         = 4 * np.pi * const.G.cgs * self.mydisk.mbh / (0.1 * const.c.cgs * (const.sigma_T.cgs/const.u.cgs))
-            Eddington_ratio = (self.mydisk.mdot / mdotedd).decompose()
+            mdotedd         = 4 * np.pi * const.G.cgs * self.mypars.mbh / (0.1 * const.c.cgs * (const.sigma_T.cgs/const.u.cgs))
+            Eddington_ratio = (self.mypars.mdot / mdotedd).decompose()
             if Eddington_ratio > 0.01:
                 photon_index = 0.41 * np.log10(Eddington_ratio) + 2.17
             else:

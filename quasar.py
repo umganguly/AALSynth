@@ -12,6 +12,7 @@ from astropy.coordinates     import SkyCoord
 from astropy.cosmology       import LambdaCDM
 from astropy.modeling.models import BlackBody
 from astropy.table           import Table
+from astroquery.ipac.ned     import Ned
 from multiprocessing         import Pool
 from numpy.polynomial        import chebyshev
 from scipy.interpolate       import CubicSpline
@@ -51,20 +52,32 @@ class Quasar:
     print("Setting observer")
     self.skycoord    = SkyCoord(ra  = self.mypars.raqso,
                                 dec = self.mypars.decqso)
+    #print("Querying NED")
+    #result_table = Ned.query_region(self.skycoord, radius = 5 * u.arcsec)
+    #redshift_mask = result_table['Redshift Points'] == np.max(result_table['Redshift Points'])
+    #result_table[redshift_mask].pprint_all()
+    #self.mypars.zqso = result_table[redshift_mask]['Redshift'][0]
+    comove_dist = LambdaCDM(H0=70, Om0=0.3, Ode0=0.7).comoving_distance(self.mypars.zqso)
+    print(f"Quasar redshift = {self.mypars.zqso} --> Comoving distance = {comove_dist}")
+    #lum_dist = (LambdaCDM(H0=70, Om0=0.3, Ode0=0.7).luminosity_distance(self.mypars.zqso)).to(u.cm)
+    #photometry_table = Ned.get_table(result_table[redshift_mask]['Object Name'])
+    #photo_mask = photometry_table['Frequency Mode'] == 'Broad-band measurement'
+    #self.ned_freq = photometry_table[photo_mask]['Frequency']
+    #self.ned_flux = (photometry_table[photo_mask]['Flux Density']).to(fu)
 
     ###############################################################################
     print(f"Initializing disk with {self.mypars.nr} annuli from {self.mypars.rlo} to {self.mypars.rhi} rg")
-    self.mydisk = ntdisk(self.mypars.sbh, self.mypars.mbh,
-                         self.mypars.mdot, self.mypars.alpha,
-                         self.mypars.inclination,
-                         self.mypars.nr, self.mypars.rlo, self.mypars.rhi,
-                         self.mypars.datapath,
-                         dtheta_fac = self.mypars.dtheta_fac)
-    comove_dist = LambdaCDM(H0=70, Om0=0.3, Ode0=0.7).comoving_distance(self.mypars.zqso)
+    self.mydisk = ntdisk(self.mypars)
+#                         self.mypars.mdot, self.mypars.alpha,
+#                         self.mypars.inclination,
+#                         self.mypars.nr, self.mypars.rlo, self.mypars.rhi,
+#                         self.mypars.datapath,
+#                         dtheta_fac = self.mypars.dtheta_fac)
     self.robs =  (comove_dist * np.sin(self.mypars.inclination) / self.mydisk.rg).decompose()
     self.zobs = self.robs / np.tan(self.mypars.inclination)
     self.reset_observer()
-    
+    print(f"\tObserver located at (r,z) = ({self.robs}, {self.zobs}), inclination = {self.mypars.inclination}")
+
     print("\tCalculating disk")
     self.mydisk.makedisk()
     print("\tDetermining disk photosphere")
@@ -72,8 +85,24 @@ class Quasar:
 
     ###############################################################################
     print("Initializing corona")
-    self.mycorona = corona(self.mydisk)
+    self.mycorona = corona(self.mypars, self.mydisk)
     self.mycorona.activate_lamppost()
+
+    #rest_freq = self.ned_freq.to(u.Hz) / (1+self.mypars.zqso)
+    #pred_flux = self._calculate_absorbed_flux_gaussleg(None,
+    #                                                   wavelength = rest_freq.to(u.Angstrom, equivalencies=u.spectral() ) 
+    #                                                   )[0]
+    #print(pred_flux)
+    #plt.clf()
+    #plt.scatter(rest_freq, self.ned_flux) # * 4 * np.pi * lum_dist * lum_dist)
+    #plt.xscale('log')
+    #plt.yscale('log')
+    #plt.xlim(plt.xlim())
+    #plt.ylim(plt.ylim())
+    #plt.plot(rest_freq, 
+    #         pred_flux
+    #         )
+    #plt.show(block=True)
 
     ###############################################################################
     if mypars.calcwind:
@@ -300,7 +329,12 @@ class Quasar:
                  ):
     try:
       chisq_spec = np.zeros((self.mypars.anum.size, self.obswave.size))
-      cosflux    = self.mydata._lsf_convolve(self.wavelength, totflux.value)/unabsflux.value
+      try:
+        cosflux    = self.mydata._lsf_convolve(self.wavelength, totflux.value)/unabsflux.value
+      except RuntimeWarning:
+        print(f"totflux = {totflux}")
+        print(f"unabsflux = {unabsflux}")
+        input("Paused")
       for i in range(self.mypars.anum.size):
         myatoms_index = self.myatoms.getspecies(self.mypars.anum[i],
                                                 self.mypars.ion[i]
@@ -617,11 +651,13 @@ class Quasar:
                          color = self.mypars.plot_code[tdx], 
                          alpha=0.3
                          )
-        plt.step(self.obsvel[myatoms_index,vel_mask],
-                 self.normobsflux[vel_mask] + tdx,
-                 where = 'mid',
-                 c=self.mypars.plot_code[tdx],
-                 label=f"{self.myatoms.specstr[myatoms_index]} "+r"$\lambda$"+f"{self.myatoms.wave[myatoms_index]:.3f}")
+        #plt.step(self.obsvel[myatoms_index,vel_mask],
+        plt.scatter(self.obsvel[myatoms_index,vel_mask],
+                    self.normobsflux[vel_mask] + tdx,
+                    #where = 'mid',
+                     #c=self.mypars.plot_code[tdx],
+                     color=self.mypars.plot_code[tdx],
+                    label=f"{self.myatoms.specstr[myatoms_index]} "+r"$\lambda$"+f"{self.myatoms.wave[myatoms_index].to(u.Angstrom).value:.3f}")
       except:
         pass
       #----------------------------------------------------------
@@ -638,7 +674,8 @@ class Quasar:
         for clddx in range(self.cld_totflux.shape[1]):
           plt.plot(self.species_velocity[:,myatoms_index],
                    self.cld_totflux[:,clddx]/unabsflux + tdx,
-                   self.mypars.plot_code[tdx]+":"
+                   self.mypars.plot_code[tdx]+":",
+                   lw=2*plt.rcParams['lines.linewidth']
                   )
       except:
         pass
@@ -646,7 +683,7 @@ class Quasar:
       try:
         plt.plot(self.species_velocity[:,myatoms_index],
                  totflux/unabsflux + tdx,
-                 self.mypars.plot_code[tdx])
+                 self.mypars.plot_code[tdx], lw=2*plt.rcParams['lines.linewidth'])
       except:
         pass
       #----------------------------------------------------------
@@ -654,7 +691,8 @@ class Quasar:
         if self.bestfit is not None:
           plt.plot(self.species_velocity[:,myatoms_index],
                    self.bestfit + tdx,
-                   f"{self.mypars.plot_code[tdx]}--")
+                   f"{self.mypars.plot_code[tdx]}--",
+                   lw=2*plt.rcParams['lines.linewidth'])
       except:
         pass
 
@@ -665,7 +703,7 @@ class Quasar:
                  np.array([-0.2, 1.2*self.mypars.anum.size]),
                  "k--")
 
-    plt.legend()
+    plt.legend(loc='lower right')
 
     title_str  = self.mypars.qname + f" zqso = {self.mypars.zqso} "
     try:
@@ -728,6 +766,20 @@ class Quasar:
                            color = self.mypars.plot_code[cldx % len(self.mypars.plot_code)],
                            alpha = 0.01 * norm_dens
                           )
+      if 1.5*xlimit > self.mydisk.x1:
+        plt.plot(self.mydisk.x1 * np.cos(theta),
+                 self.mydisk.x1 * np.sin(theta),
+                 "k:")
+        plt.plot(self.mydisk.x1 * np.cos(theta),
+                 -self.mydisk.x1 * np.sin(theta),
+                 "k:")
+      if 1.5*xlimit > self.mydisk.x2:
+        plt.plot(self.mydisk.x2 * np.cos(theta),
+                 self.mydisk.x2 * np.sin(theta),
+                 "k:")
+        plt.plot(self.mydisk.x2 * np.cos(theta),
+                 -self.mydisk.x2 * np.sin(theta),
+                 "k:")
 
       plt.xlim(-1.5*xlimit,1.5*xlimit)
       plt.ylim(-1.5*xlimit,1.5*xlimit)
@@ -932,8 +984,8 @@ class Quasar:
     self.cheb_dlog_ion_parm_list[-1] = self.cheb_dlog_ion_parm_list[-2]
 
 
-    chebfile  = self.mypars.datapath+f"/Cloudy_runs/Sbh{self.mydisk.sbh}-MBH{np.log10(self.mydisk.mbh / const.M_sun):.2f}"
-    chebfile += f"-Mdot{(self.mydisk.mdot/(const.M_sun/u.year)).decompose()}-alpha{self.mydisk.alpha}_ionfracs_lox{self.myatoms.minlox}.fits"
+    chebfile  = self.mypars.datapath+f"/Cloudy_runs/Sbh{self.mypars.sbh}-MBH{np.log10(self.mypars.mbh / const.M_sun):.2f}"
+    chebfile += f"-Mdot{(self.mypars.mdot/(const.M_sun/u.year)).decompose()}-alpha{self.mypars.viscosity_alpha}_ionfracs_lox{self.myatoms.minlox}.fits"
     datatab = Table(data=[self.cheb_log_ion_parm_list, self.cheb_ionfrac_list, self.cheb_temperature_list], names=["log_ion_parm_list", "ionfrac_list", "temperature_list"])
 
     datatab2 = Table(data=[self.cheb_degree,self.cheb_coeff_list], names=["DEGREE","COEFFS"])
@@ -1218,8 +1270,8 @@ class Quasar:
 
   #######################################################################################
   def _read_cheb_files(self):
-    chebfile  = self.mypars.datapath+f"/Cloudy_runs/Sbh{self.mydisk.sbh}-MBH{np.log10(self.mydisk.mbh / const.M_sun):.2f}"
-    chebfile += f"-Mdot{(self.mydisk.mdot/(const.M_sun/u.year)).decompose()}-alpha{self.mydisk.alpha}_ionfracs_lox{self.myatoms.minlox}.fits"
+    chebfile  = self.mypars.datapath+f"/Cloudy_runs/Sbh{self.mypars.sbh}-MBH{np.log10(self.mypars.mbh / const.M_sun):.2f}"
+    chebfile += f"-Mdot{(self.mypars.mdot/(const.M_sun/u.year)).decompose()}-alpha{self.mypars.viscosity_alpha}_ionfracs_lox{self.myatoms.minlox}.fits"
     if os.path.exists(chebfile):
       datatab1 = Table.read(chebfile, hdu=1)
       datatab2 = Table.read(chebfile, hdu=2)
@@ -1613,14 +1665,14 @@ class Quasar:
     print("-" * 70)
     print(f"Observer: zqso = {self.mypars.zqso}, inclination = {self.mypars.inclination}, coordinates = {self.skycoord.to_string('hmsdms')}")
 
-    print(f"Black hole: mass {self.mydisk.mbh.to(u.Msun):e}, spin {self.mydisk.sbh}")
+    print(f"Black hole: mass {self.mypars.mbh.to(u.Msun):e}, spin {self.mypars.sbh}")
     print(f"            Rg = {self.mydisk.rg:e} = {self.mydisk.rg.to(u.AU)}")
 
-    print(f"Accretion disk: accretion rate {self.mydisk.mdot.to(u.Msun/u.yr)}, viscosity parameter {self.mydisk.alpha}")
+    print(f"Accretion disk: accretion rate {self.mypars.mdot.to(u.Msun/u.yr)}, viscosity parameter {self.mypars.viscosity_alpha}")
     if not self.mywind is None:
       print(f"                Eddington ratio {self.mywind.Eddington_ratio}")
     print(f"                Zone 1/2 boundary (pressure) {self.mydisk.x1} rg  Zone 2/3 (opacity) boundary {self.mydisk.x2} rg")
-    print(f"                Inner radius {self.mydisk.rstar[0]} rg, Outer radius {self.mydisk.rstar[-1]} rg, nr = {self.mydisk.nr}")
+    print(f"                Inner radius {self.mydisk.rstar[0]} rg, Outer radius {self.mydisk.rstar[-1]} rg, nr = {self.mypars.nr}")
 
     print(f"Lamp post: location {self.mycorona.lamp_r_cyl}, {self.mycorona.lamp_z}")
     prtstr  = f"           spectrum L_nu_2keV = {self.mycorona.lamp_L_nu_2keV} @ nu_xo_2keV = {self.mycorona.lamp_nu_2keV}, "

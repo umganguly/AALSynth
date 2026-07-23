@@ -9,41 +9,52 @@ calcwind = False
 ############################################
 # Spectral synthesis
 minlox = 9.9
-vlo = -2000.0
-vhi = -1000.0
+#vlo = -2000.0
+#vhi = 1000.0
+vlo = -600.0
+vhi = 500.0
 vres = 3.0
-anum   = np.array([1,   7,   7,   8, 8,  14])
-ion    = np.array([1,   5,   5,   6, 6,   3])
-trandx = np.array([0,   0,   1,   0, 1,   0])
-plot_code = [    "g", "b", "r", "c", "m", 'tab:orange']
+anum   = np.array([1,   1,   7,   7,   8,   8, 14])
+ion    = np.array([1,   1,   5,   5,   6,   6,  3])
+trandx = np.array([0,   1,   0,   1,   0,   1,  0])
+plot_code = [    "g", "g", "r", 'r', "b", "b", "m"]
 gaussleg_nr = 100
 gaussleg_ntheta = 36
 ############################################
 # Black hole parameters
 sbh = 0.01
-mbh = 1.2e+8
+#mbh = 1.2e+8
+mbh = 2.9e+8
 ############################################
 # Accretion disk parameters
-mdot = 0.72
-alpha = 0.1
+#mdot = 0.72
+mdot = 0.19
+viscosity_alpha = 0.1
 nr = 300
 rlo = 0.1
 rhi = 1.0e+5
 dtheta_fac = 0.5
 ############################################
 # Observer parameters
-zqso = 0.114272
-raqso = 175.19958333333
-decqso = 46.36805555556
-inclination = 20.0
+#zqso = 0.114272
+#raqso = 175.19958333333
+#decqso = 46.36805555556
+#inclination = 20.0
+zqso = 0.120196
+raqso = 235.03226667
+decqso = 14.19361111
+inclination = 41.0
 ############################################
 # Absorber parameters
-abscloudfile = "WISEA_J114047_clouds.fits"
+#abscloudfile = "WISEA_J114047_clouds.fits"
+abscloudfile = "SDSS_J154007_clouds.fits"
 softenning = 0.1
 ############################################
 # Data files
-qname = "WISEA J114047"
-qfileroot = "WISEA_J114047"
+#qname = "WISEA J114047"
+#qfileroot = "WISEA_J114047"
+qname = "SDSS J154007"
+qfileroot = "SDSS_J154007"
 redospline = False
 ############################################
 # Optimization parameters

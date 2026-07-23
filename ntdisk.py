@@ -1,36 +1,31 @@
 import os
 import numpy             as np
 import matplotlib.pyplot as plt
-import time              as tm
 
 from astropy                 import constants as const
 from astropy                 import units as u
-from astropy.io              import fits
 from astropy.table           import Table
 from astropy.modeling.models import BlackBody
-from astropy.visualization   import astropy_mpl_style, quantity_support
+from multiprocessing         import Pool
 from scipy                   import special
-from scipy                   import interpolate
-from scipy.integrate         import solve_ivp,odeint
-from scipy.interpolate       import RegularGridInterpolator, CubicSpline
-from scipy.special           import gamma
-
+from scipy.interpolate       import CubicSpline
+from tqdm                    import tqdm
 
 
 ######################################################
 # The ntdisk class defines routines for computing a thin-disk Novikov-Thorne solution as revised by Penna et al.
 ######################################################
 # User inputs for __init__ to define the class:
-#        self.sbh         = Spin of the black hole
-#        self.mbh         = Mass of the black hole                        (solar masses)
-#        self.mdot        = Accretion rate                                (solar masses / year)
-#        self.alpha       = Shakura-Sunyaev viscosity parameter
+#        self.mypars.sbh         = Spin of the black hole
+#        self.mypars.mbh         = Mass of the black hole                        (solar masses)
+#        self.mypars.mdot        = Accretion rate                                (solar masses / year)
+#        self.mypars.viscosity_alpha       = Shakura-Sunyaev viscosity parameter
 #        self.inclination = inclination of eh observer point              (radians)
 #        self.robs        = Cylindrical r component of the observer point (rg)
-#        self.nr          = Number of radial annuli
-#        self.rlo         = rlo, inner radius
-#        self.rhi         = rhi, outer radius of the disk                 (rg)
-#        self.datapath    = datapath, string location of disk solutions
+#        self.mypars.nr          = Number of radial annuli
+#        self.mypars.rlo         = rlo, inner radius
+#        self.mypars.rhi         = rhi, outer radius of the disk                 (rg)
+#        self.mypars.datapath    = datapath, string location of disk solutions
 #
 ######################################################
 # __init__ computes the following:
@@ -38,7 +33,7 @@ from scipy.special           import gamma
 #        self.thetaobs    = azimuthal component of observer point
 #        self.rg          = Gravitational radius of the black hole, GM/c^2 (g)
 #        self.rms         = radius of ISCO                                (rg)
-#        self.rstar       = annuli radii                       (self.nr,) (rg)
+#        self.rstar       = annuli radii                       (self.mypars.nr,) (rg)
 #        self.drstar      = annuli thicknesses                            (rg)
 #        self.ntheta      = number of azimuthal grid points in each annulus
 #
@@ -144,39 +139,31 @@ from scipy.special           import gamma
 ######################################################
 class ntdisk:
     ######################################################
-    def __init__(self, sbh, mbh, mdot, alpha, inclination, nr, rlo, rhi, datapath, dtheta_fac = 2.0):
-        self.sbh         = sbh
-        self.mbh         = mbh
-        self.mdot        = mdot
-        self.alpha       = alpha
-        self.inclination = inclination
+    def __init__(self, mypars):
+        self.mypars      = mypars
         self.robs        = None
         self.zobs        = None
         self.thetaobs    = 0.0 * u.rad
-        self.rg          = (const.G.cgs * self.mbh / (const.c.cgs * const.c.cgs)).to(u.cm)
-        self.nr          = nr
-        self.rlo         = rlo
-        self.rhi         = rhi
+        self.rg          = (const.G.cgs * self.mypars.mbh / (const.c.cgs * const.c.cgs)).to(u.cm)
         self.rref        = 0
-        self.diskheight  = np.empty(self.nr)
-        self.zt1         = np.empty(self.nr)
-        self.dzdr        = np.empty(self.nr)
-        self.temperature = np.empty(self.nr)
-        self.tempt1      = np.empty(self.nr)
-        self.density     = np.empty(self.nr)
-        self.denst1      = np.empty(self.nr)
-        self.x1          = self.rlo
-        self.x2          = self.rhi
+        self.diskheight  = np.empty(self.mypars.nr)
+        self.zt1         = np.empty(self.mypars.nr)
+        self.dzdr        = np.empty(self.mypars.nr)
+        self.temperature = np.empty(self.mypars.nr)
+        self.tempt1      = np.empty(self.mypars.nr)
+        self.density     = np.empty(self.mypars.nr)
+        self.denst1      = np.empty(self.mypars.nr)
+        self.x1          = self.mypars.rlo
+        self.x2          = self.mypars.rhi
         self.forceint    = False
-        self.datapath    = datapath
 
-        z1    = np.power(1.0+self.sbh, 1./3.) + np.power(1.0-self.sbh,1./3.)
-        z1    = 1.0 + np.power(1.0-self.sbh*self.sbh,1./3.) * ( z1 )
-        z2    = np.sqrt(3.0 * self.sbh * self.sbh + z1*z1)
+        z1    = np.power(1.0+self.mypars.sbh, 1./3.) + np.power(1.0-self.mypars.sbh,1./3.)
+        z1    = 1.0 + np.power(1.0-self.mypars.sbh*self.mypars.sbh,1./3.) * ( z1 )
+        z2    = np.sqrt(3.0 * self.mypars.sbh * self.mypars.sbh + z1*z1)
         self.rms   = 3.0 + z2 - np.sqrt((3.0-z1)*(3+z1+2*z2))
 
         y0    = np.sqrt(self.rms)
-        self.rstar = np.squeeze(np.logspace(np.log10(self.rms * 1.01), np.log10(self.rms * self.rhi), num = self.nr))
+        self.rstar = np.squeeze(np.logspace(np.log10(self.rms * 1.01), np.log10(self.rms * self.mypars.rhi), num = self.mypars.nr))
         self.drstar = np.copy(self.rstar)
         self.drstar[1:-1] = 0.5*(self.rstar[2:]-self.rstar[:-2])
         self.drstar[0]  = self.drstar[0]
@@ -185,18 +172,18 @@ class ntdisk:
         # Compute the annuli thicknesses
         # rstar = np.squeeze(np.logspace(np.log10(rms*1.01),6.0,num=3000))
         # 0.5*(rstar[i+1]-rstar[i-1]) = rstar[i]*0.5*(f-1/f)
-        self.deltar = np.empty(self.nr)
-        self.ntheta = np.empty(self.nr, dtype=np.int8)
+        self.deltar = np.empty(self.mypars.nr)
+        self.ntheta = np.empty(self.mypars.nr, dtype=np.int8)
         self.deltar[1:-1] = 0.5 * (self.rstar[2:] - self.rstar[:-2])
         self.deltar[0]  = self.deltar[1]
         self.deltar[-1] = self.deltar[-2]
-        self.ntheta = np.ceil(2.0 * np.pi * self.rstar / (dtheta_fac * self.deltar))
+        self.ntheta = np.ceil(2.0 * np.pi * self.rstar / (self.mypars.dtheta_fac * self.deltar))
 
     ######################################################
     def diskgravity(self,robs,zobs): # robs and zobs in normal units (not rg)
         fr = np.zeros(robs.size) * u.cm / u.s**2
         fz = np.zeros(robs.size) * u.cm / u.s**2
-        for rdx in range(self.nr):
+        for rdx in range(self.mypars.nr):
             mass = (self.surfdens(np.array([30.0*self.diskheight[rdx]])*self.rg,rdx))[0] * const.u.cgs * self.rstar[rdx] * self.deltar[rdx] * self.rg * self.rg * 2.0
             frr = np.zeros(robs.size) * u.cm / u.s**2
             fzr = np.zeros(robs.size) * u.cm / u.s**2
@@ -297,124 +284,47 @@ class ntdisk:
 
         return fluxrtnu
 
-        #theta1D = np.linspace(0,
-        #                      2.0 * np.pi,
-        #                      ntr)
-        #theta2D = np.broadcast_to(theta1D,
-        #                          (self.robs.size,ntr)
-        #                          ).T
-
-        #(gradZx,gradZy,gradZz) = (-self.dzdr[r] * np.cos(theta1D),
-        #                          -self.dzdr[r] * np.sin(theta1D),
-        #                          np.ones(ntr))
-        #gradZr     = np.sqrt(gradZx*gradZx + gradZy*gradZy)
-        #gradZmag   = np.sqrt(gradZr*gradZr + gradZz*gradZz)
-
-        # R are the vectors from the disk patch to the observer(s) located at (r=self.robs,theta=0 deg,z=self.zobs) [This is the xz plane]
-        # The disk patch is located at (r=self.rstar[self.rref],theta=theta,z=self.zt1[self.rref])
-        # Rx, Ry, Rz, Rr, and Rmag will have shape (ntr,self.robs.size) and in terms of self.rg
-        # Rhat should have shape (ntr,self.robs.size,3)
-        #print(f"ntdisk.fnudiskannulus:     self.robs.shape = {self.robs.shape}    self.thetaobs.shape = {self.thetaobs.shape}   ntr = {ntr}   self.robs.size = {self.robs.size}")
-        #self.Rx   = np.broadcast_to(self.robs * np.cos(self.thetaobs), (ntr,self.robs.size)) - self.rstar[r] * np.cos(theta2D)
-        #self.Ry   = np.broadcast_to(self.robs * np.sin(self.thetaobs), (ntr,self.robs.size)) - self.rstar[r] * np.sin(theta2D)
-        #self.Rz   = np.broadcast_to(self.zobs - self.zt1[r], (ntr,self.robs.size))
-
-        #self.Rr   = np.sqrt(self.Rx * self.Rx + self.Ry * self.Ry)
-        #self.Rmag = np.sqrt(self.Rr * self.Rr + self.Rz * self.Rz)
-
-        # Example from numpy:
-        #   a = np.ones((1, 2, 3))
-        #   np.transpose(a, (1, 0, 2)).shape
-        #   (2, 1, 3)
-        #
-        # [self.Rx,self.Ry,self.Rz] has a shape of .... (3,ntr,self.robs.size)
-        # self.Rhat has shape (ntr,self.robs.size,3)
-        #self.Rhat = np.transpose([self.Rx,self.Ry,self.Rz], (1,2,0)) / np.transpose(np.broadcast_to(self.Rmag,(3,ntr,self.robs.size)), (1,2,0))
-
-        #self.cosbeta = np.sum(self.Rhat * gradZhat , axis=2)  # shape is (ntr,self.robs.size)
-        # shape should be (ntr,self.robs.size)
-        #cbdx  = np.extract(self.cosbeta > 0.0, range(self.cosbeta.size))
-        #cbdxo = np.int16(np.mod(cbdx, self.robs.size))
-        #cbdxt = np.int16((cbdx-cbdxo)/self.robs.size)
-
-        # Doppler shift:
-        #velpar_mag = np.sqrt(1.0/self.rstar[r]) # Rotational motion of disk - in (theta+90 deg)-hat direction; Need dot product with R-hat... velpar_mag is a scalar
-        # As a vector, velpar = velpar_mag (-sin theta i-hat + cos theta j-hat)
-        # theta2D has shape (ntr,self.robs.size). velpar_mag is scalar.
-
-        #velpar_vec = velpar_mag * np.transpose(np.array([-np.sin(theta1D), np.cos(theta1D), np.zeros(theta1D.shape)]), (1,0)) #shape (ntr,3)
-
-
-        #betadotrhat = np.sum(velpar_vec * self.Rhat, axis=2) # shape (self.ntheta[r],self.robs.shape)
-        #velpar_dot_Rhat = np.sum(velpar_vec[:,None,:] * self.Rhat, axis=2)
-
-        # Relativistic beaming:
-        #gamma    = 1.0/np.sqrt(1- velpar_mag * velpar_mag) # scalar
-
-        #t0 = tm.time()
-        #for i in np.unique(cbdxo):
-        #    idx = np.extract(cbdxo == i, cbdxt)
-        #    #freqprime = frequency.reshape(frequency.size,1) @ (np.sqrt((1 + betadotrhat[idx,i]) / (1 - betadotrhat[idx,i]))).reshape(1,idx.size)   # shape (frequency.size,idx.size)
-        #    freqprime = frequency.reshape(frequency.size,1) @ (np.sqrt((1 + velpar_dot_Rhat[idx,i]) / (1 - velpar_dot_Rhat[idx,i]))).reshape(1,idx.size)   # shape (frequency.size,idx.size)
-
-        #    # Relativistic beaming:
-        #    #costheta = betadotrhat[idx,i] / velpar_mag # shape (idx.size,)
-        #    costheta = velpar_dot_Rhat[idx,i] / velpar_mag # shape (idx.size,)
-        #    D        = 1./(gamma * (1. - velpar_mag * costheta))   # shape (idx.size,)
-
-        #    # want to return shape (frequency.size,ntr,self.robs.size)
-        #    cosbetarm2 = np.broadcast_to(self.cosbeta[idx,i] / self.Rmag[idx,i]**2,
-        #                                 (frequency.size,idx.size))
-
-        #    bb_eval = np.zeros(freqprime.shape) * (fu / u.sr)
-        #    bb_mask = const.h * freqprime / (const.k_B * self.tempt1[r]) < 670.74 # This is to prevent underflows
-        #    bb_eval[bb_mask] = bb(freqprime[bb_mask])
-
-        #    fluxrt[:,idx,i]  = self.rstar[r] * self.deltar[r] * dtheta * (D**3) * cosbetarm2 * u.sr * bb_eval
-
-        #return fluxrt
-
     ######################################################
     def makedisk(self):
-        mstar    = self.mbh / (3.0 * const.M_sun.cgs)
-        mdotstar = (self.mdot / (1.0e+17 * u.g / u.s)).decompose()
-        print(f"\t\tM* = {mstar:e}, Mdot* = {mdotstar:e}  Rg = {self.rg:e}  mstar = {mstar:e}  mdotstar = {mdotstar:e}")
+        mstar    = (self.mypars.mbh / (3.0 * const.M_sun.cgs)).decompose()
+        mdotstar = (self.mypars.mdot / (1.0e+17 * u.g / u.s)).decompose()
+        print(f"\t\tM* = {mstar:e}, Mdot* = {mdotstar:e}  Rg = {self.rg:e}  mdotstar = {mdotstar:e}")
         ######################################################
         y     = np.sqrt(self.rstar)
         ######################################################
-        a = 1.0 + self.sbh * self.sbh * y * y * y * y * (1.0 + 2.0/(y * y))
-        b = 1.0 + self.sbh / (y * y * y)
-        c = 1.0 - 3.0 / (y * y) + 2.0 * self.sbh * self.sbh / (y * y * y)
-        d = 1.0 - 2 / (y * y) + self.sbh * self.sbh / (y * y * y * y)
-        e = 1.0 + self.sbh * self.sbh * (4.0 - 4.0 / (y * y) + 3.0 / (y * y * y * y)) / (y * y * y * y)
-        f = 1.0 - 2.0 * self.sbh / (y * y * y) + self.sbh * self.sbh / (y * y * y * y)
-        g = 1.0 - 2.0 / (y * y) + self.sbh / (y * y * y)
-        r = f * f / c - self.sbh * self.sbh * (g / np.sqrt(c) - 1) / (y * y)
+        a = 1.0 + self.mypars.sbh * self.mypars.sbh * y * y * y * y * (1.0 + 2.0/(y * y))
+        b = 1.0 + self.mypars.sbh / (y * y * y)
+        c = 1.0 - 3.0 / (y * y) + 2.0 * self.mypars.sbh * self.mypars.sbh / (y * y * y)
+        d = 1.0 - 2 / (y * y) + self.mypars.sbh * self.mypars.sbh / (y * y * y * y)
+        e = 1.0 + self.mypars.sbh * self.mypars.sbh * (4.0 - 4.0 / (y * y) + 3.0 / (y * y * y * y)) / (y * y * y * y)
+        f = 1.0 - 2.0 * self.mypars.sbh / (y * y * y) + self.mypars.sbh * self.mypars.sbh / (y * y * y * y)
+        g = 1.0 - 2.0 / (y * y) + self.mypars.sbh / (y * y * y)
+        r = f * f / c - self.mypars.sbh * self.mypars.sbh * (g / np.sqrt(c) - 1) / (y * y)
         s = a * a * c * r / (b * b * d)
         ######################################################
         y0 = np.sqrt(self.rms)
-        y1 = 2.0 * np.cos((np.arccos(self.sbh)-np.pi)/3.0)
-        y2 = 2.0 * np.cos((np.arccos(self.sbh)+np.pi)/3.0)
-        y3 = -2.0 * np.cos(np.arccos(self.sbh)/3.0)
+        y1 = 2.0 * np.cos((np.arccos(self.mypars.sbh)-np.pi)/3.0)
+        y2 = 2.0 * np.cos((np.arccos(self.mypars.sbh)+np.pi)/3.0)
+        y3 = -2.0 * np.cos(np.arccos(self.mypars.sbh)/3.0)
         ######################################################
         q0 = b / (y * np.sqrt(c))
         q1 = y - y0
-        q2 = -1.5 * self.sbh * np.log(y / y0)
-        q3 = -3 * (y1 - self.sbh) * (y1 - self.sbh) * np.log((y - y1) / (y0 - y1)) / (y1 * (y1 - y2) * (y1 - y3))
-        q4 = -3 * (y2 - self.sbh) * (y2 - self.sbh) * np.log((y - y2) / (y0 - y2)) / (y2 * (y2 - y1) * (y2 - y3))
-        q5 = -3 * (y3 - self.sbh) * (y3 - self.sbh) * np.log((y - y3) / (y0 - y3)) / (y3 * (y3 - y1) * (y3 - y2))
+        q2 = -1.5 * self.mypars.sbh * np.log(y / y0)
+        q3 = -3 * (y1 - self.mypars.sbh) * (y1 - self.mypars.sbh) * np.log((y - y1) / (y0 - y1)) / (y1 * (y1 - y2) * (y1 - y3))
+        q4 = -3 * (y2 - self.mypars.sbh) * (y2 - self.mypars.sbh) * np.log((y - y2) / (y0 - y2)) / (y2 * (y2 - y1) * (y2 - y3))
+        q5 = -3 * (y3 - self.mypars.sbh) * (y3 - self.mypars.sbh) * np.log((y - y3) / (y0 - y3)) / (y3 * (y3 - y1) * (y3 - y2))
         q = q0 * (q1 + q2 + q3 + q4 + q5)
         ######################################################
-        diskheightinner   = (1.0e+5 * u.cm / self.rg)     * np.power(self.alpha,0)     * np.power(mstar, 0)     *          mdotstar        * np.power(r,0)   * np.power(y,0)      * np.power(a,2)      * np.power(b,-3)     * np.power(c,1/2) * np.power(d,-1)     * np.power(s,-1)     *          q
-        diskheightmiddle  = (3.0e+3 * u.cm / self.rg)     * np.power(self.alpha,-1/10) * np.power(mstar, 9/10)  * np.power(mdotstar,2/10)  * np.power(r,0)   * np.power(y,21/20)  *          a         * np.power(b,-6/5)   * np.power(c,1/2) * np.power(d,-3/5)   * np.power(s,-1/2)   * np.power(q,1/5)
-        diskheightouter   = ( 900.0 * u.cm / self.rg)     * np.power(self.alpha,-1/10) * np.power(mstar, 9/10)  * np.power(mdotstar,3/10)  * np.power(r,9/8) * np.power(y,0)      * np.power(a,19/20)  * np.power(b,-11/10) * np.power(c,1/2) * np.power(d,-23/40) * np.power(s,-19/40) * np.power(q,3/40)
-        temperatureinner  = (4.0e+7 * u.Kelvin)           * np.power(self.alpha,-1/4)  * np.power(mstar, -1/4)  * np.power(mdotstar,0)     * np.power(r,0)   * np.power(y,-3/4)   * np.power(a,-1/2)   * np.power(b,1/2)    * np.power(c,0)   * np.power(d,0)      * np.power(s,1/4)    * np.power(q,0)
-        temperaturemiddle = (3.0e+8 * u.Kelvin)           * np.power(self.alpha,-1/5)  * np.power(mstar, -3/5)  * np.power(mdotstar,2/5)   * np.power(r,0)   * np.power(y,-9/5)   * np.power(a,0)      * np.power(b,-2/5)   * np.power(c,0)   * np.power(d,-1/5)   * np.power(s,0)      * np.power(q,2/5)
-        temperatureouter  = (8.0e+7 * u.Kelvin)           * np.power(self.alpha,-1/5)  * np.power(mstar, -1/2)  * np.power(mdotstar,3/10)  * np.power(r,0)   * np.power(y,-3/2)   * np.power(a,-1/10)  * np.power(b,-1/5)   * np.power(c,0)   * np.power(d,-3/20)  * np.power(s,1/20)   * np.power(q,3/10)
-        densityinner      = (1.0e-4 * u.g / u.cm**3)      * np.power(self.alpha,-1)    *          mstar         * np.power(mdotstar,-2)    * np.power(r,0)   * np.power(y,3)      * np.power(a,-4)     * np.power(b,6)      * np.power(c,0)   *          d         * np.power(s,2)      * np.power(q,-2)    / const.u.cgs
-        densitymiddle     = (10.0   * u.g / u.cm**3)      * np.power(self.alpha,-7/10) * np.power(mstar,-11/10) * np.power(mdotstar,2/5)   * np.power(r,0)   * np.power(y,-33/10) * np.power(a,-1)     * np.power(b,3/5)    * np.power(c,0)   * np.power(d,-1/5)   * np.power(s,1/2)    * np.power(q,2/5)   / const.u.cgs
-        densityouter      = (80.0   * u.g / u.cm**3)      * np.power(self.alpha,-7/10) * np.power(mstar,-5/4)   * np.power(mdotstar,11/20) * np.power(r,0)   * np.power(y,-15/4)  * np.power(a,-17/20) * np.power(b,3/10)   * np.power(c,0)   * np.power(d,-11/40) * np.power(s,17/40)  * np.power(q,11/20) / const.u.cgs
-        pratio            = (5e-5)                        * np.power(self.alpha,-1/4)  * np.power(mstar, 7/4)   * np.power(mdotstar,-2)    * np.power(r,0)   * np.power(y,21/4)   * np.power(a,-5/2)   * np.power(b,9/2)    * np.power(c,0)   *          d         * np.power(s,5/4)    * np.power(q,-2)
+        diskheightinner   = (1.0e+5 * u.cm / self.rg)     * np.power(self.mypars.viscosity_alpha,0)     * np.power(mstar, 0)     *          mdotstar        * np.power(r,0)   * np.power(y,0)      * np.power(a,2)      * np.power(b,-3)     * np.power(c,1/2) * np.power(d,-1)     * np.power(s,-1)     *          q
+        diskheightmiddle  = (3.0e+3 * u.cm / self.rg)     * np.power(self.mypars.viscosity_alpha,-1/10) * np.power(mstar, 9/10)  * np.power(mdotstar,2/10)  * np.power(r,0)   * np.power(y,21/20)  *          a         * np.power(b,-6/5)   * np.power(c,1/2) * np.power(d,-3/5)   * np.power(s,-1/2)   * np.power(q,1/5)
+        diskheightouter   = ( 900.0 * u.cm / self.rg)     * np.power(self.mypars.viscosity_alpha,-1/10) * np.power(mstar, 9/10)  * np.power(mdotstar,3/10)  * np.power(r,9/8) * np.power(y,0)      * np.power(a,19/20)  * np.power(b,-11/10) * np.power(c,1/2) * np.power(d,-23/40) * np.power(s,-19/40) * np.power(q,3/40)
+        temperatureinner  = (4.0e+7 * u.Kelvin)           * np.power(self.mypars.viscosity_alpha,-1/4)  * np.power(mstar, -1/4)  * np.power(mdotstar,0)     * np.power(r,0)   * np.power(y,-3/4)   * np.power(a,-1/2)   * np.power(b,1/2)    * np.power(c,0)   * np.power(d,0)      * np.power(s,1/4)    * np.power(q,0)
+        temperaturemiddle = (3.0e+8 * u.Kelvin)           * np.power(self.mypars.viscosity_alpha,-1/5)  * np.power(mstar, -3/5)  * np.power(mdotstar,2/5)   * np.power(r,0)   * np.power(y,-9/5)   * np.power(a,0)      * np.power(b,-2/5)   * np.power(c,0)   * np.power(d,-1/5)   * np.power(s,0)      * np.power(q,2/5)
+        temperatureouter  = (8.0e+7 * u.Kelvin)           * np.power(self.mypars.viscosity_alpha,-1/5)  * np.power(mstar, -1/2)  * np.power(mdotstar,3/10)  * np.power(r,0)   * np.power(y,-3/2)   * np.power(a,-1/10)  * np.power(b,-1/5)   * np.power(c,0)   * np.power(d,-3/20)  * np.power(s,1/20)   * np.power(q,3/10)
+        densityinner      = (1.0e-4 * u.g / u.cm**3)      * np.power(self.mypars.viscosity_alpha,-1)    *          mstar         * np.power(mdotstar,-2)    * np.power(r,0)   * np.power(y,3)      * np.power(a,-4)     * np.power(b,6)      * np.power(c,0)   *          d         * np.power(s,2)      * np.power(q,-2)    / const.u.cgs
+        densitymiddle     = (10.0   * u.g / u.cm**3)      * np.power(self.mypars.viscosity_alpha,-7/10) * np.power(mstar,-11/10) * np.power(mdotstar,2/5)   * np.power(r,0)   * np.power(y,-33/10) * np.power(a,-1)     * np.power(b,3/5)    * np.power(c,0)   * np.power(d,-1/5)   * np.power(s,1/2)    * np.power(q,2/5)   / const.u.cgs
+        densityouter      = (80.0   * u.g / u.cm**3)      * np.power(self.mypars.viscosity_alpha,-7/10) * np.power(mstar,-5/4)   * np.power(mdotstar,11/20) * np.power(r,0)   * np.power(y,-15/4)  * np.power(a,-17/20) * np.power(b,3/10)   * np.power(c,0)   * np.power(d,-11/40) * np.power(s,17/40)  * np.power(q,11/20) / const.u.cgs
+        pratio            = (5e-5)                        * np.power(self.mypars.viscosity_alpha,-1/4)  * np.power(mstar, 7/4)   * np.power(mdotstar,-2)    * np.power(r,0)   * np.power(y,21/4)   * np.power(a,-5/2)   * np.power(b,9/2)    * np.power(c,0)   *          d         * np.power(s,5/4)    * np.power(q,-2)
         tratio            = (6e-6)                                                     *          mstar         * np.power(mdotstar,-1)    * np.power(r,0)   * np.power(y,3)      * np.power(a,-1)     * np.power(b,2)      * np.power(c,0)   * np.power(d,1/2)    * np.power(s,1/2)    * np.power(q,-1)
         ######################################################
         pdx    = np.extract(pratio > 1, np.arange(0,pratio.size,1))
@@ -454,131 +364,143 @@ class ntdisk:
         print(f'\t\tPressure change at {round(self.x1)} rg ({self.x1*self.rg})  Optical depth change at {round(self.x2)} rg ({self.x2*self.rg})')
 
     ######################################################
-    def photosphere(self,makeplot=False):
+    def photosphere(self,makeplot=False,overwrite=False):
         self.zt1 = np.empty(0)
-        filename = self.datapath+f"Sbh{self.sbh}-MBH{np.log10(self.mbh / const.M_sun):.2f}-Mdot{(self.mdot/(const.M_sun/u.year)).decompose()}-alpha{self.alpha}.fits"
-        if os.path.isfile(filename):
+        filename = self.mypars.datapath+f"Sbh{self.mypars.sbh}-MBH{np.log10(self.mypars.mbh / const.M_sun):.2f}-Mdot{(self.mypars.mdot/(const.M_sun/u.year)).decompose()}-alpha{self.mypars.viscosity_alpha}.fits"
+        if os.path.isfile(filename) and not overwrite:
             print("\tReading "+filename)
             data = Table.read(filename, format="fits")
             self.zt1 = np.array(data['zt1'])
             self.tempt1 = np.array(data['tempt1']) * u.K
             self.denst1 = np.array(data['denst1']) / u.cm**3
         else:
-            txt = "{} {:10.6f} {:10.6f} {:10.6f} {:10.6f} {:10.6f} {:10.6e} {:10.6e} {}"
             print("\tWriting "+filename)
             self.zt1  = np.zeros(self.rstar.size)
             self.dzdr = np.empty(self.rstar.size)
             self.tempt1 = np.empty(self.rstar.size) * u.Kelvin
             self.denst1 = np.empty(self.rstar.size) / u.cm**3
-            nit = 0
-            zlo = 1.0e-4
-            zhi = 1.0e+2
-            plt.ion()
+
+            pool_tuple_input = []
             for i in range(self.rstar.size):
-                done = 0
-                nit = 0
-                while done == 0:
-                    z          = np.squeeze(np.logspace(np.log10(zlo),np.log10(zhi),num=np.power(10,4+nit)))
-                    rhoz       = self.verticaldensity(z, i) * const.u.cgs
-                    rdx        = np.extract(rhoz * u.cm**3 / u.g <= 1.0e-5 * const.u.cgs / u.g, np.arange(0,rhoz.size,1))
-                    rhoz[rdx]  = 1.0e-5 * const.u.cgs / u.cm**3
-                    zp         = np.append(z,100.0*self.diskheight[i])
-                    sd         = self.surfdens(zp * self.rg, i)
-                    sd0        = 2.0 * np.squeeze(sd[sd.size-1])
-                    sdc        = np.copy(sd[0:sd.size-1])
-                    sdr        = 1 - 4*np.power(sdc/sd0,2)
-                    tempz      = self.temperature[i] * np.power(sdr, 0.25)
-                    tmpdx      = np.extract(tempz / u.Kelvin <= 1.0e-5, np.arange(0,tempz.size,1))
-                    if tmpdx.size > 0:
-                        tempz[tmpdx] = tempz[np.min(tmpdx)-1] + 1.0e-5 * u.Kelvin
-                    ffopacity  = (0.64e+23 * u.cm**2 / u.g) * np.multiply((rhoz * u.cm**3 / u.g), np.power(tempz / u.Kelvin, -7/2))
-                    opacity    = (ffopacity + 0.4* u.cm**2 / u.g) * const.u.cgs
-                    sd = self.surfdens(z * self.rg, i)
-                    dsd        = 0.5*(sd[2:sd.size]-sd[0:sd.size-2])
-                    dsd        = np.insert(dsd,0,dsd[0])
-                    dsd        = np.append(dsd,dsd[-1])
-                    dtau       = np.multiply(opacity,dsd)
-                    opticaldepth = np.zeros(dtau.size)
-                    tracko = 0
-                    for o in range(dtau.size):
-                        opticaldepth[o] = np.sum(dtau[o:])
-                        if opticaldepth[o] > 1:
-                            tracko = o
-                    done = 1
-                    if (np.max(opticaldepth) < 1) or (np.min(opticaldepth) > 1) or (opticaldepth[tracko]/opticaldepth[tracko+1]-1 > 1.0e-2):
-                        done = 0
-                        zlo *= 0.99
-                        zhi *= 1.01
-                    if done == 0:
-                        nit += 1
-
-                    self.zt1[i:]    = z[tracko] + (z[tracko+1]-z[tracko])*(opticaldepth[tracko+1]-1)/(opticaldepth[tracko+1]-opticaldepth[tracko])
-                    self.tempt1[i:] = self.verticaltemperature(self.zt1[i], i)
-                    if self.zt1[i] <= self.diskheight[i]:
-                        self.denst1[i:] = self.density[i] * np.exp(-np.power(self.zt1[i]/self.diskheight[i], 2))
-                    else:
-                        self.denst1[i:] = self.density[i] * np.exp(-self.zt1[i]/self.diskheight[i])
-                    print(txt.format(i,self.rstar[i],self.zt1[i],self.zt1[i]/self.diskheight[i],opticaldepth[tracko],opticaldepth[tracko+1],self.tempt1[i],self.denst1[i],nit)+" "+str(done))
-
-                if makeplot:
-                  plt.clf()
-                  self.pltdisk(i)
-                  plt.pause(0.001)
+                pool_tuple_input.append(i)
+            
+            with Pool(self.mypars.nproc) as pool:
+                output_phot_tuple = pool.map_async(self._phot_calc_annulus, pool_tuple_input)
+                output_phot_tuple.wait()
+                
+                for (i, zt1i, tempt1i, denst1i) in tqdm(output_phot_tuple.get(), desc="\t\tPhotosphering...", ncols=0):
+                    self.zt1[i]    = zt1i 
+                    self.tempt1[i] = tempt1i
+                    self.denst1[i] = denst1i               
+                    if makeplot:
+                        plt.ion()
+                        plt.clf()
+                        self.pltdisk(i)
+                        plt.pause(0.001)
 
             data = Table(data=[range(self.rstar.size),self.rstar,self.diskheight,self.zt1,self.temperature,self.tempt1,self.density,self.denst1],
                          names=["i","rstar","diskheight","zt1","temperature","tempt1","density","denst1"])
-            data.write(filename, format="fits")
+            data.write(filename, format="fits", overwrite=True)
 
-        #self.zt1cs = interpolate.splrep(self.rstar,self.zt1,s=len(self.rstar))
-        #self.dzdr  = interpolate.splev(self.rstar,self.zt1cs,der=1)
         self.zt1cs = CubicSpline(self.rstar,self.zt1)
         self.dzdr  = self.zt1cs(self.rstar,nu=1)
         self.tempt1cs = CubicSpline(self.rstar,self.tempt1)
 
     ######################################################
+    def _phot_calc_annulus(self, i):
+        nit = 0
+        zlo = 1.0e-4
+        zhi = 1.0e+2
+        done = False
+        nit = 0
+        while not done:
+            z          = np.squeeze(np.logspace(np.log10(zlo),np.log10(zhi),num=np.power(10,4+nit)))
+            rhoz       = self.verticaldensity(z, i) * const.u.cgs
+            rdx        = np.extract(rhoz * u.cm**3 / u.g <= 1.0e-5 * const.u.cgs / u.g, np.arange(0,rhoz.size,1))
+            rhoz[rdx]  = 1.0e-5 * const.u.cgs / u.cm**3
+            zp         = np.append(z,100.0*self.diskheight[i])
+            sd         = self.surfdens(zp * self.rg, i)
+            sd0        = 2.0 * np.squeeze(sd[sd.size-1])
+            sdc        = np.copy(sd[0:sd.size-1])
+            sdr        = 1 - 4*np.power(sdc/sd0,2)
+            tempz      = self.temperature[i] * np.power(sdr, 0.25)
+            tmpdx      = np.extract(tempz / u.Kelvin <= 1.0e-5, np.arange(0,tempz.size,1))
+            if tmpdx.size > 0:
+                tempz[tmpdx] = tempz[np.min(tmpdx)-1] + 1.0e-5 * u.Kelvin
+            ffopacity  = (0.64e+23 * u.cm**2 / u.g) * np.multiply((rhoz * u.cm**3 / u.g), np.power(tempz / u.Kelvin, -7/2))
+            opacity    = (ffopacity + 0.4* u.cm**2 / u.g) * const.u.cgs
+            sd = self.surfdens(z * self.rg, i)
+            dsd        = 0.5*(sd[2:sd.size]-sd[0:sd.size-2])
+            dsd        = np.insert(dsd,0,dsd[0])
+            dsd        = np.append(dsd,dsd[-1])
+            dtau       = np.multiply(opacity,dsd)
+            opticaldepth = np.zeros(dtau.size)
+            tracko = 0
+            for o in range(dtau.size):
+                opticaldepth[o] = np.sum(dtau[o:])
+                if opticaldepth[o] > 1:
+                    tracko = o
+            done = True
+            if (np.max(opticaldepth) < 1) or (np.min(opticaldepth) > 1) or (opticaldepth[tracko]/opticaldepth[tracko+1]-1 > 1.0e-2):
+                done = False
+                zlo *= 0.99
+                zhi *= 1.01
+            if not done:
+                nit += 1
+
+            zt1i    = z[tracko] + (z[tracko+1]-z[tracko])*(opticaldepth[tracko+1]-1)/(opticaldepth[tracko+1]-opticaldepth[tracko])
+            tempt1i = self.verticaltemperature(self.zt1[i], i)[0]
+            if zt1i <= self.diskheight[i]:
+                denst1i = self.density[i] * np.exp(-np.power(zt1i/self.diskheight[i], 2))
+            else:
+                denst1i = self.density[i] * np.exp(-zt1i/self.diskheight[i])
+
+        return i, zt1i, tempt1i, denst1i
+
+    ######################################################
     def pltdisk(self,i=0,photosphere=True,ctype='k'):
-        plt.subplot(111,frameon=False)
-        plt.axis('off')
-        #plt.title(r'$S_{bh}$ = '+'{:.2f}'.format(self.sbh)+r' --- log $M_{bh}/M_\odot$ = '+'{:.1f}'.format(np.log10(self.mbh.to(u.solMass).value))+r' ---  $\dot{M}$ = '+'{:.1g}'.format(self.mdot.to(u.solMass/u.yr))+r' $M_\odot$/yr --- log r/rg = '+'{:.3g}'.format(np.log10(self.rstar[i]))+' --- robs/rg = {:.3g} --- zobs/rg = {:.3g}'.format(self.robs, self.zobs))
+        try:
+            plt.clf()
+        except:
+            pass
+        fig = plt.gcf()
 
-        leglabel = r'$S_{bh}$ = '+'{:.2f}'.format(self.sbh)+r', log $M_{bh}/M_\odot$ = '+'{:.1f}'.format(np.log10(self.mbh.to(u.solMass).value))+r', $\dot{M}$ = '+'{:.2g}'.format(self.mdot.to(u.solMass/u.yr).value)+r' $M_\odot$/yr'
-
-        plt.subplot(311)
-        plt.plot(self.rstar, self.diskheight,ctype, label=leglabel)
+        ax1 = fig.add_subplot(311)
+        leglabel = r'$S_{bh}$ = '+'{:.2f}'.format(self.mypars.sbh)+r', log $M_{bh}/M_\odot$ = '+'{:.1f}'.format(np.log10(self.mypars.mbh.to(u.solMass).value))+r', $\dot{M}$ = '+'{:.2g}'.format(self.mypars.mdot.to(u.solMass/u.yr).value)+r' $M_\odot$/yr'
+        ax1.set_title(leglabel)
+        ax1.plot(self.rstar, self.diskheight,ctype)
         if photosphere:
-          plt.plot(self.rstar[:self.zt1.size],self.zt1,'b--')
-          plt.plot([self.x1,self.x1],[np.min(self.diskheight), np.max(self.zt1)], 'm--')
-          plt.plot([self.x2,self.x2],[np.min(self.diskheight), np.max(self.zt1)], 'm--')
-          plt.plot([self.rstar[i], self.rstar[i]], [np.min(self.diskheight), np.max(self.zt1)], 'g--')
-        #plt.plot([self.robs],[self.zobs],'ro')
-        plt.ylabel(r'Disk height/$r_g$')
-        plt.xlabel(r'Radial distance $r/r_g$') #  ($r_g = GM/c^2 = $'+f'{mydisk.rg:.2e}'+')')
-        plt.yscale("log")
-        plt.xscale("log")
+          ax1.plot(self.rstar[:self.zt1.size],self.zt1,'b--')
+          ax1.plot([self.x1,self.x1],[np.min(self.diskheight), np.max(self.zt1)], 'm--')
+          ax1.plot([self.x2,self.x2],[np.min(self.diskheight), np.max(self.zt1)], 'm--')
+          ax1.plot([self.rstar[i], self.rstar[i]], [np.min(self.diskheight), np.max(self.zt1)], 'g--')
+        ax1.set_ylabel(r'Disk height/$r_g$')
+        ax1.set_yscale("log")
+        ax1.set_xscale("log")
 
-        plt.subplot(312)
-        plt.plot(self.rstar,self.temperature, ctype)
+        ax2 = fig.add_subplot(312, sharex=ax1)
+        ax2.plot(self.rstar,self.temperature, ctype)
         if photosphere:
-          plt.plot(self.rstar[:self.zt1.size],self.tempt1,'b--')
-          plt.plot([self.x1,self.x1],[np.min(self.tempt1/u.K),np.max(self.temperature/u.K)], 'm--')
-          plt.plot([self.x2,self.x2],[np.min(self.tempt1/u.K),np.max(self.temperature/u.K)], 'm--')
-          plt.plot([self.rstar[i],self.rstar[i]],[np.min(self.tempt1/u.K),np.max(self.temperature/u.K)], 'g--')
-        plt.ylabel("Disk temperature (K)")
-        plt.xlabel(r'Radial distance $r/r_g$') #  ($r_g = GM/c^2 = $'+f'{mydisk.rg:.2e}'+')')
-        plt.yscale("log")
-        plt.xscale("log")
+          ax2.plot(self.rstar[:self.zt1.size],self.tempt1,'b--')
+          ax2.plot([self.x1,self.x1],[np.min(self.tempt1/u.K),np.max(self.temperature/u.K)], 'm--')
+          ax2.plot([self.x2,self.x2],[np.min(self.tempt1/u.K),np.max(self.temperature/u.K)], 'm--')
+          ax2.plot([self.rstar[i],self.rstar[i]],[np.min(self.tempt1/u.K),np.max(self.temperature/u.K)], 'g--')
+        ax2.set_ylabel("Disk temperature (K)")
+        ax2.set_yscale("log")
 
-        plt.subplot(313)
-        plt.plot(self.rstar,self.density, ctype)
+        ax3 = fig.add_subplot(313, sharex=ax1)
+        ax3.plot(self.rstar,self.density, ctype)
         if photosphere:
-          plt.plot(self.rstar[:self.zt1.size],self.denst1,'b--')
-          plt.plot([self.x1,self.x1],[np.min(self.denst1*np.power(u.cm,3)),np.max(self.density*np.power(u.cm,3))], 'm--')
-          plt.plot([self.x2,self.x2],[np.min(self.denst1*np.power(u.cm,3)),np.max(self.density*np.power(u.cm,3))], 'm--')
-          plt.plot([self.rstar[i],self.rstar[i]],[np.min(self.denst1*np.power(u.cm,3)),np.max(self.density*np.power(u.cm,3))], 'g--')
-        plt.ylabel(r'Disk density (atoms/cm$^3$)')
-        plt.xlabel(r'Radial distance $r/r_g$') #  ($r_g = GM/c^2 = $'+f'{mydisk.rg:.2e}'+')')
-        plt.yscale("log")
-        plt.xscale("log")
+          ax3.plot(self.rstar[:self.zt1.size],self.denst1,'b--')
+          ax3.plot([self.x1,self.x1],[np.min(self.denst1*np.power(u.cm,3)),np.max(self.density*np.power(u.cm,3))], 'm--')
+          ax3.plot([self.x2,self.x2],[np.min(self.denst1*np.power(u.cm,3)),np.max(self.density*np.power(u.cm,3))], 'm--')
+          ax3.plot([self.rstar[i],self.rstar[i]],[np.min(self.denst1*np.power(u.cm,3)),np.max(self.density*np.power(u.cm,3))], 'g--')
+        ax3.set_ylabel(r'Disk density (atoms/cm$^3$)')
+        ax3.set_xlabel(r'Radial distance $r/r_g$') #  ($r_g = GM/c^2 = $'+f'{mydisk.rg:.2e}'+')')
+        ax3.set_yscale("log")
+
+        plt.show(block=False)
+        plt.pause(0.001)
 
     ######################################################
     def surfdens(self, z, i_annulus): #z0, rho0:
@@ -633,7 +555,7 @@ class ntdisk:
 
     # This is for interpolating the density grid for a particular value of r and z
     def verticaldensity_onepoint(self,r,z):
-        return np.interp(r, self.rstar, self.verticaldensity2(np.broadcast_to(z, self.rstar.shape), range(self.nr)))
+        return np.interp(r, self.rstar, self.verticaldensity2(np.broadcast_to(z, self.rstar.shape), range(self.mypars.nr)))
 
     ######################################################
     def verticaltemperature(self, z, i_annulus):
@@ -665,7 +587,7 @@ class ntdisk:
 
     # This is for interpolating the temperature grid for a particular value of r and z
     def verticaltemperature_onepoint(self,r,z):
-        vtemp2 = self.verticaltemperature2(np.broadcast_to(z, self.rstar.shape), np.arange(self.nr))
+        vtemp2 = self.verticaltemperature2(np.broadcast_to(z, self.rstar.shape), np.arange(self.mypars.nr))
         return np.interp(r, self.rstar, vtemp2)
     ######################################################
 
