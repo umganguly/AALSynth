@@ -159,10 +159,10 @@ class readpars:
             self.mdot = 0.72 * u.M_sun / u.yr
 
          try:
-            print(f"Viscosity parameter = {self.alpha}")
+            print(f"Viscosity parameter = {self.viscosity_alpha}")
          except AttributeError:
-            print(f"alpha not defined in {inputfile}")
-            self.alpha = 0.1
+            print(f"Viscosity alpha not defined in {inputfile}")
+            self.viscosity_ = 0.1
 
          try:
             print(f"Number of disk annuli = {self.nr}")
@@ -211,6 +211,7 @@ class readpars:
             self.decqso = 46.36805555556 * u.deg
 
          try:
+            self.inclination *= u.degree
             print(f"inclination = {self.inclination}")
          except AttributeError:
             print(f"inclination not defined in {inputfile}")

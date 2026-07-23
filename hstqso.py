@@ -10,7 +10,6 @@ from astropy.convolution   import convolve, Gaussian1DKernel
 from astropy.coordinates   import SkyCoord
 from astropy.io            import fits, ascii
 from astropy.table         import Table
-from astroquery.ipac.ned   import Ned
 from astroquery.mast       import MastMissions, Observations
 from matplotlib.transforms import Bbox
 from multiprocessing       import Pool
