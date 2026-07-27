@@ -4,8 +4,8 @@ datapath = "/mnt/data/AALSynth_data/"
 cloudypath  = "/mnt/data/c23.01/source/"
 nproc = 40
 verbose = True
-calcabscl = True
-calcwind = False
+calcabscl = False
+calcwind = True
 ############################################
 # Spectral synthesis
 minlox = 9.9
@@ -34,6 +34,9 @@ nr = 300
 rlo = 0.1
 rhi = 1.0e+5
 dtheta_fac = 0.5
+############################################
+# Wind parameters
+wind_ntheta = 90
 ############################################
 # Observer parameters
 #zqso = 0.114272
@@ -70,4 +73,4 @@ F_test_prob = 0.05
 ############################################
 # Display parameters
 showgeometry = True
-interactive = True
+interactive = False
