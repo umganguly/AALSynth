@@ -211,7 +211,7 @@ class ntdisk:
             fr += frr
             fz += fzr
 
-        return [fr,fz]
+        return np.array([fr,fz])
 
     ######################################################
     # Want to have fluxrt = self.fnudiskannlus(frequency,r) which will have shape (frequency.size,self.ntheta[r],self.robs.size)

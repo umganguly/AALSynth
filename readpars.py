@@ -189,6 +189,14 @@ class readpars:
             self.dtheta_fac = 0.5
 
          ###########################################################################
+         print("Wind parameters:")    
+         try: 
+            print(f"Wind_ntheta = {self.wind_ntheta}")
+         except AttributeError:
+            print(f"Mdot not defined in {inputfile}")
+            self.wind_ntheta = 90
+
+         ###########################################################################
          print("Observer parameters:")
          try:
             print(f"Quasar redshift = {self.zqso}")
