@@ -89,6 +89,22 @@ class Quasar:
     self.mycorona = corona(self.mypars, self.mydisk)
     self.mycorona.activate_lamppost()
 
+    #rest_freq = self.ned_freq.to(u.Hz) / (1+self.mypars.zqso)
+    #pred_flux = self._calculate_absorbed_flux_gaussleg(None,
+    #                                                   wavelength = rest_freq.to(u.Angstrom, equivalencies=u.spectral() ) 
+    #                                                   )[0]
+    #print(pred_flux)
+    #plt.clf()
+    #plt.scatter(rest_freq, self.ned_flux) # * 4 * np.pi * lum_dist * lum_dist)
+    #plt.xscale('log')
+    #plt.yscale('log')
+    #plt.xlim(plt.xlim())
+    #plt.ylim(plt.ylim())
+    #plt.plot(rest_freq, 
+    #         pred_flux
+    #         )
+    #plt.show(block=True)
+
     ###############################################################################
     if mypars.calcwind:
       print("Initializing wind...")
