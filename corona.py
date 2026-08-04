@@ -13,22 +13,28 @@ class corona:
     ######################################################
     def __init__(self, 
                  mypars,
-                 mydisk):
+                 mydisk,
+                 ntabs = 0
+                 ):
         self.mypars = mypars
         self.mydisk = mydisk
 
     ######################################################
-    def activate_lamppost(self):
+    def activate_lamppost(self,
+                          ntabs = 0
+                          ):
         fu = (u.erg / (u.s * u.cm * u.cm * u.Hz))
 
         # The location of the lamppost should be on the z-axis at a height of r_ISCO
         self.lamp_r_cyl = 0.0
         self.lamp_z = self.mydisk.rstar[0] # rg
-        print(f"\tPlacing lampost at r = {self.lamp_r_cyl} rg,   z = {self.lamp_z} rg")
+        print("\t" * ntabs + f"Placing lampost at r = {self.lamp_r_cyl} rg,   z = {self.lamp_z} rg")
 
         self.mydisk.robs = np.array([self.lamp_r_cyl])
         self.mydisk.zobs = np.array([self.lamp_z])
         self.mydisk.thetaobs = 0.0
+
+        self.position_vec = np.array([self.lamp_r_cyl, 0.0, self.lamp_z])
 
         frequency = np.logspace(13,20,num=100) * u.Hz
         dfreq = np.copy(frequency)
@@ -57,9 +63,9 @@ class corona:
             self.lamp_L_nu_2keV = self.Lnu2500A * 10.0**(self.alpha_ox / -0.385)
             self.lamp_nu_2keV = (2.0 * u.keV / const.h).to(u.Hz)
 
-            prtstr  = f"\tUsing Lnu(2500A) = {self.Lnu2500A:.3e} (nuLnu(2500A) = {(self.Lnu2500A * frequency2500)[0].to(u.erg/u.s):.3e}) "
+            prtstr  = f"Using Lnu(2500A) = {self.Lnu2500A:.3e} (nuLnu(2500A) = {(self.Lnu2500A * frequency2500)[0].to(u.erg/u.s):.3e}) "
             prtstr += f"--> alpha_ox = {self.alpha_ox:.3f} --> Lnu(2keV) = {self.lamp_L_nu_2keV:.3e}"
-            print(prtstr)
+            print("\t" * ntabs + prtstr)
 
             # Shape of the hard X-ray spectrum, adapted from Laha et al. (2025, Frontiers in Astronomy and Space Sciences)
             mdotedd         = 4 * np.pi * const.G.cgs * self.mypars.mbh / (0.1 * const.c.cgs * (const.sigma_T.cgs/const.u.cgs))
@@ -73,12 +79,12 @@ class corona:
             cutoff_energy = (96/13) * const.m_e * const.c * const.c / ((photon_index + 0.5)**2 - (9/4))
             self.cutoff_freq   = (cutoff_energy / const.h).to(u.Hz)
 
-            prtstr  = f"\tX-ray spectrum: nuLnu = {(self.lamp_L_nu_2keV * self.lamp_nu_2keV).to(u.erg/u.s):.3e} "
+            prtstr  = f"X-ray spectrum: nuLnu = {(self.lamp_L_nu_2keV * self.lamp_nu_2keV).to(u.erg/u.s):.3e} "
             prtstr += f"(E / {(const.h * self.lamp_nu_2keV).to(u.keV):.3f})^{self.lamp_alpha_x:.3f} "
             prtstr += f"exp(-E/{cutoff_energy.to(u.keV):.3f})"
-            print(prtstr)
+            print("\t" * ntabs + prtstr)
 
-            print("\tModifying tau=1 surface temperature profile of disk...")
+            print("\t" * ntabs + "Modifying tau=1 surface temperature profile of disk...")
             for i in range(self.mydisk.rstar.size):
                 added_flux = np.sum(self.fnu_lamppost(frequency, self.mydisk.rstar[i], self.mydisk.zt1[i]) * dfreq)
                 self.mydisk.tempt1[i] = np.power(tempt1[i]**4 + added_flux / const.sigma_sb, 0.25)
@@ -96,7 +102,11 @@ class corona:
     # From Shaban et al. 2022
     # lamp_nu_2keV = (3.8 * u.keV)/const.h.to(u.keV/u.Hz)  # [0.5 - 7] keV band - split the difference
     # lamp_L_xo = (10.0**45.9) * (u.erg/u.s) / lamp_nu_2keV
-    def fnu_lamppost(self, frequency, robs, zobs, # robs and zobs in units of rg.. they should be 1D numpy arrays
+    def fnu_lamppost(self, 
+                     frequency, 
+                     robs, 
+                     zobs, # robs and zobs in units of rg.. they should be 1D numpy arrays
+                     ntabs = 0
                      ):
         fu = (u.erg / (u.s * u.cm * u.cm * u.Hz))
 

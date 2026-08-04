@@ -19,13 +19,22 @@ from corona  import corona
 # But before we do that, we can still set up some ofthe architecture forthe clouds.
 #
 class AbsCloud:
-  def __init__(self, basedir, mydisk, mycorona, myatoms,
-               rcl, zcl, thetacl,                        # position of the cloud
-               rhoindex=-2.0, logrhoscale=16, logrho0=2, # density parameters
-               logZ = 0.0,                               # Abundance parameters
-               vcl_los=0.0
+  def __init__(self, 
+               mypars,         # Instance of readpars class
+               mydisk,         # Instance of ntdisk class
+               mycorona,       # Instance of corona class
+               myatoms,        # Instance of atomic class
+               rcl,            # position of the cloud - cylindrical r component (units of rg)
+               zcl,            # position of the cloud - z component (units of rg)
+               thetacl,        # position of the cloud - cylindrical theta/azimuthal component
+               rhoindex=-2.0,  # density parameters - globule power-law index
+               logrhoscale=16, # density parameters - logarithmic scale/rg
+               logrho0=2,      # density parameters - logarithmic number density at surfance
+               logZ = 0.0,     # Abundance parameters - log of metallicity in solar units
+               vcl_los=0.0,    # Line-of-sight velocity of cloud (km/s)
+               ntabs = 0
                ):
-    self.basedir     = basedir
+    self.mypars      = mypars
     self.mydisk      = mydisk
     self.mycorona    = mycorona
     self.myatoms     = myatoms
@@ -40,38 +49,39 @@ class AbsCloud:
     self.cloudyran   = False
 
     if not 0.1 * self.zcl > (10.0**self.logrhoscale * u.cm / self.mydisk.rg):
-      print("AbsCloud WARNING: Your cloud size is not much less than the height above the disk! Is this physical?")
-      print(f"\t\tResetting zcl = {self.zcl} --> {10.0*self.zcl}")
+      print("\t" * ntabs + "AbsCloud WARNING: Your cloud size is not much less than the height above the disk! Is this physical?")
+      print("\t" * (ntabs+1) + f"\tResetting zcl = {self.zcl} --> {10.0*self.zcl}")
       self.zcl = 10 * np.abs(self.zcl)
 
   #####################################################################
   def calcionspec(self,
                   cloudyfileroot = '',
                   structure_only = False,
-                  verbose = False
+                  verbose = False,
+                  ntabs = 0
                   ):
     fu = u.erg / (u.s * u.cm * u.cm * u.Hz)
-    sedfilename = self.basedir+'Cloudy_runs/'+cloudyfileroot+'.sed'
+    sedfilename = self.mypars.datapath+'Cloudy_runs/'+cloudyfileroot+'.sed'
     if verbose:
-      print(f"\t\tLooking for {sedfilename}...")
+      print("\t" * ntabs + f"Looking for {sedfilename}...")
     if os.path.exists(sedfilename):
       if verbose:
-        print(f"\t\t\t...Found! Reading in file...")
+        print("\t" * (ntabs+1) + f"...Found! Reading in file...")
       datatab = Table.read(sedfilename, format="ascii.basic", guess=False, data_start=1, names=["freq","flux"])
       RydinHz = (const.Ryd).to(u.Hz, equivalencies=u.spectral())
       self.ionspecfreq = datatab["freq"] * RydinHz
       self.ionspecflux = datatab["flux"] * fu
     else:
       if verbose:
-        print(f"\t\t\t...Not found! Calculating...")
+        print("\t" * (ntabs+1) + f"...Not found! Calculating...")
       # Calculate the ionizing spectrum for the cloud
-      self.ionspecfreq = np.logspace(13,20,num=3000) * u.Hz
-      self.ionspecflux = (np.zeros(3000) + 1.0e-100) * fu
+      self.ionspecfreq = np.logspace(12.0,24.5,num=5000) * u.Hz
+      self.ionspecflux = (np.zeros(5000) + 1.0e-100) * fu
       if not structure_only:
         self.mydisk.robs = self.rcl
         self.mydisk.zobs = self.zcl
         fracerr = np.inf
-        for r in tqdm(range(self.mydisk.rstar.size), desc=f"\t\t\tIntegrating disk", ncols=0):
+        for r in tqdm(range(self.mydisk.rstar.size), desc="\t" * ntabs + f"Integrating disk", ncols=0):
           oldspec = np.where(self.ionspecflux < 1.0e-100 * fu, 1.0e-100 * fu, self.ionspecflux)
 
           fluxdiskannulusdivided = self.mydisk.fnudiskannulus(self.ionspecfreq,r)
@@ -96,9 +106,10 @@ class AbsCloud:
                 cloudypath,
                 softenning = 0.1,
                 verbose = False,
-                runcloudy = False):
+                runcloudy = False
+                ):
     if runcloudy:
-      cloud  = cloudy(self.basedir, cloudypath, 1,                 # 0 = emission, 1 = absorption
+      cloud  = cloudy(self.mypars.datapath, cloudypath, 1,                 # 0 = emission, 1 = absorption
                       self.myatoms,
                       self.ionspecfreq, self.ionspecflux,            # ionizing spectrum
                       rhoindex=self.rhoindex, logrhoscale=self.logrhoscale, logrho0=self.logrho0, # density parameters

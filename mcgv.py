@@ -60,7 +60,13 @@ from cloudy import cloudy
 ######################################################
 class mcgv:
     ######################################################
-    def __init__(self, mydisk, mycorona, myatoms, mypars):
+    def __init__(self, 
+                 mydisk, 
+                 mycorona, 
+                 myatoms, 
+                 mypars,
+                 ntabs = 0
+                 ):
         self.mydisk   = mydisk
         self.mycorona = mycorona
         self.myatoms  = myatoms
@@ -68,13 +74,14 @@ class mcgv:
         mdotedd       = 4 * np.pi * const.G.cgs * self.mypars.mbh / (0.1 * const.c.cgs * (const.sigma_T.cgs/const.u.cgs))
         self.Eddington_ratio = (self.mypars.mdot / mdotedd).decompose()
 
+        rootname = self.mypars.datapath+f"Sbh{self.mypars.sbh}"
+        rootname += f"-MBH{np.log10(self.mypars.mbh / const.M_sun):.2f}"
+        rootname += f"-Mdot{(self.mypars.mdot/(const.M_sun/u.year)).decompose()}"
+        rootname += f"-alpha{self.mypars.viscosity_alpha}"
+
         # Create grids in r and theta (spherical coordinates)
         # For r, use the same grid as the cylindrical r coordinate in myspec
-        self.windfile  = self.mypars.datapath+f"Sbh{self.mypars.sbh}"
-        self.windfile += f"-MBH{np.log10(self.mypars.mbh / const.M_sun):.2f}"
-        self.windfile += f"-Mdot{(self.mypars.mdot/(const.M_sun/u.year)).decompose()}"
-        self.windfile += f"-alpha{self.mypars.viscosity_alpha}"
-        self.windfile += f"-wind_{self.mypars.nr}x{self.mypars.wind_ntheta}.fits"
+        self.windfile  = rootname + f"-wind_{self.mypars.nr}x{self.mypars.wind_ntheta}.fits"
 
         # --- Grid ---
         self.rsph_grid = self.mydisk.rstar * self.mydisk.rg.to(u.cm)
@@ -83,11 +90,11 @@ class mcgv:
                                          self.mypars.wind_ntheta) * u.rad
         self.dthsph = self.thetasph_grid[1] - self.thetasph_grid[0]
 
-        print(f"\tLooking for {self.windfile}")
+        print("\t" * ntabs + f"Looking for {self.windfile}")
         self.bounded = False
         if os.path.exists(self.windfile):
-            print(f"\t\tReading {self.windfile}")
-            with fits.open(self.windfile) as hdul:
+            print("\t" * (ntabs+1) + f"Reading {self.windfile}")
+            with fits.open(self.windfile, hdu=1) as hdul:
                 self.tottime       = hdul[1].header['SIMTIME'] * u.s
                 self.RR            = hdul[1].data['r2D'] * u.cm
                 self.TT            = hdul[1].data['theta2D'] * u.rad
@@ -96,36 +103,48 @@ class mcgv:
                 self.v_phi         = hdul[1].data['vphi2D'] * (u.cm/u.s)
                 self.mass_density  = hdul[1].data['rho2D'] * (u.g/u.cm**3)
                 self.boundary_mask = hdul[1].data['boundary_mask']
+
+                self.number_density   = self.mass_density / const.u.cgs
                 self.bounded = True
+
+            with fits.open(self.windfile, hdu=2) as hdul:
+                self.column_density_table_grid = hdul[1].data['column_density_grid'] / u.cm**2
+
         else:
-            print(f"\t\tNot found. Initializing r-theta mesh")
+            print("\t" * (ntabs+1) + f"Not found. Initializing r-theta mesh")
             # --- Meshgrid for geometry ---
             self.RR, self.TT = np.meshgrid(self.rsph_grid, self.thetasph_grid, indexing="ij")
             self.tottime = 0. * u.s
+
 
         self.DRR   = np.broadcast_to((self.mydisk.drstar * self.mydisk.rg).to(u.cm).value, self.RR.T.shape).T * u.cm
         self.RRCYL = self.RR * np.sin(self.TT)
         self.ZZ    = self.RR * np.cos(self.TT)
 
+        self.rcell_vecs = np.array([self.RRCYL / self.mydisk.rg, 
+                                    np.zeros(self.RRCYL.shape), 
+                                    self.ZZ  / self.mydisk.rg
+                                    ]) # shape = (3,) + self.RRCYL.shape # units rg
+
         self.sinth, self.costh = np.sin(self.TT), np.cos(self.TT)
         self.cotth = self.costh / (self.sinth+1e-10)
 
-        self.Mrgrid     = np.zeros((self.mypars.nr,self.mypars.wind_ntheta))
-        self.Mthetagrid = np.zeros((self.mypars.nr,self.mypars.wind_ntheta))
-
         # --- Computational Domain ---
-        print(f"\tSetting computational domain")
+        print("\t" * ntabs + f"Setting computational domain")
         self.z0   = self.mydisk.zt1 * self.mydisk.rg.to(u.cm)
         self.z02D = np.broadcast_to(self.z0.to(u.cm), self.ZZ.T.shape).T * u.cm
         if not self.bounded:
-            self.boundary_mask = (self.ZZ > np.interp(self.RRCYL, self.rsph_grid, self.z0)) & (self.RRCYL/self.mydisk.rg > self.mydisk.rstar[0])
-        self.in_disk =  self.ZZ < np.interp(self.RRCYL, self.rsph_grid, self.z0)
+            ZZLO = self.ZZ - 0.5 * self.DRR * np.cos(self.TT)
+            self.boundary_mask = (ZZLO > np.interp(self.RRCYL, self.rsph_grid, self.z0)) & ((self.RRCYL/self.mydisk.rg).decompose() > self.mydisk.rstar[0])
+        self.in_disk =  self.ZZ + 0.5 * self.DRR * np.cos(self.TT) < np.interp(self.RRCYL, self.rsph_grid, self.z0)
+        self.in_shield = np.copy(self.boundary_mask)
 
         # --- Dilution of central force ---
         tau = np.exp(- (self.ZZ - self.z02D)/self.z02D)
         self.modified_Gamma = self.Eddington_ratio * np.exp(-tau)
 
-        print(f"\tSetting initial thermodynamics...")
+        # --- Thermodynamics ---
+        print("\t" * ntabs + f"Setting initial thermodynamics...")
         if not self.bounded:
             self.number_density = self.mydisk.verticaldensity3(self.ZZ.flatten()/self.mydisk.rg, 
                                                                 self.RRCYL.flatten()/self.mydisk.rg
@@ -133,26 +152,27 @@ class mcgv:
             self.mass_density   = self.number_density * const.u.cgs
             self.mass_density   = np.where(np.isfinite(self.mass_density) & (self.mass_density > const.u.cgs / u.cm**3), self.mass_density, np.ones((self.mass_density.shape)) * const.u.cgs / u.cm**3)
 
-        self.temperature    = self.mydisk.verticaltemperature3(self.ZZ.flatten()/self.mydisk.rg, self.RRCYL.flatten()/self.mydisk.rg).reshape(self.mypars.nr,self.mypars.wind_ntheta)
-        self.temperature    = np.where(self.temperature < 2.7 * u.K, 2.7 * np.ones_like(self.temperature), self.temperature)
+            self.column_density_table_grid = np.zeros((self.mypars.nr,self.mypars.wind_ntheta,self.myatoms.photo_Z.size)) / u.cm**2
+
+        self.temperature = np.ones(self.number_density.shape) * 2.7 * u.K
 
         self.adiabatic_index = 5./3.
         self.specific_enthaply = None
 
         if not os.path.exists(self.windfile):
-            print(f"\tInitializing velocity field")
+            print("\t" * ntabs + f"Initializing velocity field")
             # --- Initial Fields ---
             # Use the thermal speed = v_rms = sqrt(3 k T / m) at the tau=1 surface
             # What is the direction from the tau=1 surface? Normal to it?
             # self.mydisk.dzdr gives the slope of the tau=1 surface....
             # slope of normal is -1/self.mydisk.dzdr
             # so normal is at an angle = - np.arctan(self.mydisk.dzdr)
-            v_rms        = np.sqrt(3. * const.k_B.cgs * self.temperature / const.u.cgs).decompose(bases=u.cgs.bases)
-            self.v_theta = - np.broadcast_to(np.cos(np.arctan(self.mydisk.zt1/self.mydisk.rstar) - np.arctan(self.mydisk.dzdr)), (self.mypars.wind_ntheta,self.mypars.nr)).T * v_rms
-            self.v_r     = np.sqrt(v_rms * v_rms - self.v_theta * self.v_theta)
-            self.v_phi   = np.sqrt(const.G * self.mypars.mbh / (self.RR)).decompose(bases=u.cgs.bases)
+            v_rms           = np.sqrt(3. * const.k_B.cgs * self.temperature / const.u.cgs).decompose(bases=u.cgs.bases)
+            self.v_thetasph = - np.broadcast_to(np.cos(np.arctan(self.mydisk.zt1/self.mydisk.rstar) - np.arctan(self.mydisk.dzdr)), (self.mypars.wind_ntheta,self.mypars.nr)).T * v_rms
+            self.v_rsph     = np.sqrt(v_rms * v_rms - self.v_thetasph* self.v_thetasph)
+            self.v_phi      = np.sqrt(const.G * self.mypars.mbh / (self.RR)).decompose(bases=u.cgs.bases)
 
-        print("\tSetting force multiplier functions")
+        print("\t" * ntabs + "Setting force multiplier functions")
         ######################################################
         # Dannen, Randall C.; Proga, Daniel; Kallman, Timothy R.; Waters, Tim 2019ApJ...882...99D
         # These tables are formatted to be easy to parse (see the python example below),
@@ -171,56 +191,35 @@ class mcgv:
         # Call as fmultgridfunc((lgt,lgxi))
         self.fmultgridfunc = RegularGridInterpolator((self.fmultarray[1:,0],self.fmultarray[0,1:]), self.fmultarray[1:,1:], bounds_error=False, fill_value=0)
 
-        print("\tCommiting None-sequitters")
+        self.forcemultfile  = rootname + f"-fmultgrid_{self.mypars.nr}x{self.mypars.wind_ntheta}.fits"
+        print("\t" * ntabs + f"Looking for {self.forcemultfile}")
+        if os.path.exists(self.forcemultfile):
+          print("\t" * ntabs + f"\tReading {self.forcemultfile}")
+          data = Table.read(self.forcemultfile, format="fits")
+          self.Mrgrid     = np.array(data['Mrgrid'])
+          self.Mthetagrid = np.array(data['Mthetagrid'])
+        else:
+          print("\t" * ntabs + "\tNot found...")
+          self.Mrgrid     = np.zeros(self.RR.shape)
+          self.Mthetagrid = np.zeros(self.RR.shape)
+
+        print("\t" * ntabs + "Commiting None-sequitters")
         self.squiggle = None
         self.rf = None
         self.z0_for_rf = None
         self.lorentz_factor = None
 
     ######################################################
-    def _cloudypool(self, i, j, gridx, gridy,cloudypath):
-        fu = (u.erg / (u.s * u.cm * u.cm * u.Hz))
-        ionspecfreq = np.logspace(13,19,num=3000) * u.Hz
-        linarray = Table(data=(['no','nope','no way jose'], [1,2,3]), names=['ID', 'Grr'])
-        lognuFnu = self.lognuFnugrid[i,j]
-        if lognuFnu == 0.0:
-            ionspecflux = (np.zeros(3000) + 1.0e-100) * fu
-            for r in range(self.mydisk.rstar.size):
-                # Reset observer location...
-                self.mydisk.robs     = self.mydisk.rstar[i] * np.sin(self.theta[j]) # Cylindrical r
-                self.mydisk.thetaobs = 0.0 # Cylindrical theta...
-                self.mydisk.zobs     = self.mydisk.rstar[i] * np.cos(self.theta[j]) # z... (cylindrical or Cartesian)
-                fluxdiskannulusdivided = self.mydisk.fnudiskannulus(ionspecfreq,r)
-                fluxdiskannulus        = np.sum(fluxdiskannulusdivided[:,:,0],axis=1)
-                ionspecflux           += fluxdiskannulus
-            ionspecflux = np.where(ionspecflux < 1.0e-100 * fu, 1.0e-100 * fu, ionspecflux)
-
-            lognuFnu = np.interp((const.Ryd).to(u.Hz, equivalencies=u.spectral()), ionspecfreq, np.log10((ionspecfreq * ionspecflux).value))
-            logvden = np.log10(self.mydisk.verticaldensity_onepoint(gridx,gridy).to(u.cm**-3).value)
-            if lognuFnu < 27.38 and logvden > -5.0:
-                cloud = cloudy(self.datapath, cloudypath, 0,                 # 0 = emission, 1 = absorption
-                               self.myatoms,
-                               ionspecfreq, ionspecflux,            # ionizing spectrum
-                               0.0, np.log10((self.mydisk.drstar[i] * self.mydisk.rg).to(u.cm).value), logvden,
-                               contemp = self.mydisk.tempt1[j].value, rstar = gridx, zstar = gridy
-                               )
-                rootname = f"EM-hden{logvden:.2f}-nuFnu{lognuFnu:.2f}-rstar{gridx:.2f}-zstar{gridy:.2f}"
-                if cloud.cloudyran:
-                    linarray    = np.copy(cloud.linarray)
-                elif os.path.exists("./Cloudy_runs/"+rootname+".lin"):
-                    if os.path.getsize("./Cloudy_runs/"+rootname+".lin") > 0:
-                        linarray = ascii.read(f"./Cloudy_runs/{rootname}.lin", format='commented_header', header_start=0, data_start=1, delimiter='\t', guess=False)
-
-        return lognuFnu, linarray
-
-    ######################################################
     # Relativistic Euler equation residuals
-    def _EULER(self, dtime, which_residual):   #which_residual=['rho','vr','vth','vphi']
+    def _EULER(self, 
+               dtime, 
+               which_residual
+               ):   #which_residual=['rho','vr','vth','vphi']
         match which_residual:
             case 'rho': # Continuity
                 # Mass flux in r, theta directions ---
-                massflux_r  = self.mass_density * self.lorentz_factor * self.v_r     # g / cm**2 / s
-                massflux_th = self.mass_density * self.lorentz_factor * self.v_theta # g / cm**2 / s
+                massflux_r  = self.mass_density * self.lorentz_factor * self.v_rsph     # g / cm**2 / s
+                massflux_th = self.mass_density * self.lorentz_factor * self.v_thetasph # g / cm**2 / s
 
                 dr2mdot_dr         = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.g / u.cm / u.s)
                 dr2mdot_dr[1:-1,:] = ( ( (self.RR[2:, :]**2) * massflux_r[ 2:,  :] ) - ( (self.RR[:-2, :]**2) * massflux_r[ :-2, :  ] ) ) / (2 * self.DRR[1:-1, :])   # g / cm / s
@@ -236,11 +235,11 @@ class mcgv:
                 return drho
 
             case 'vr': # Radial Equation
-                dv_r_dr         = np.zeros_like(self.v_r) / np.ones_like(self.DRR)
-                dv_r_dr[1:-1,:] = ( self.v_r[2:, :] - self.v_r[:-2, :] ) / (2 * self.DRR[1:-1, :])
+                dv_r_dr         = np.zeros_like(self.v_rsph) / np.ones_like(self.DRR)
+                dv_r_dr[1:-1,:] = ( self.v_rsph[2:, :] - self.v_rsph[:-2, :] ) / (2 * self.DRR[1:-1, :])
 
-                dv_r_dtheta         = np.zeros_like(self.v_r) / np.ones_like(self.TT)
-                dv_r_dtheta[:,1:-1] = ( self.v_r[:, 2:] - self.v_r[:, :-2]) / (2 * self.dthsph)
+                dv_r_dtheta         = np.zeros_like(self.v_rsph) / np.ones_like(self.TT)
+                dv_r_dtheta[:,1:-1] = ( self.v_rsph[:, 2:] - self.v_rsph[:, :-2]) / (2 * self.dthsph)
 
                 dP_dr         = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne / u.cm**2) / np.ones_like(self.DRR)
                 dP_dr[1:-1,:] = (self.P_total[2:,:] - self.P_total[:-2,:]) / (2 * self.DRR[1:-1, :])
@@ -250,9 +249,9 @@ class mcgv:
 
                 lhs_r[self.boundary_mask] = (
                     self.mass_density[self.boundary_mask] * self.specific_enthaply[self.boundary_mask] * self.lorentz_factor[self.boundary_mask]**2 *
-                    (self.v_r[self.boundary_mask] * dv_r_dr[self.boundary_mask]
-                     + self.v_theta[self.boundary_mask] * u.rad / self.RR[self.boundary_mask] * dv_r_dtheta[self.boundary_mask]
-                     - (self.v_theta[self.boundary_mask]**2 + self.v_phi[self.boundary_mask]**2) / self.RR[self.boundary_mask]
+                    (self.v_rsph[self.boundary_mask] * dv_r_dr[self.boundary_mask]
+                     + self.v_thetasph[self.boundary_mask] * u.rad / self.RR[self.boundary_mask] * dv_r_dtheta[self.boundary_mask]
+                     - (self.v_thetasph[self.boundary_mask]**2 + self.v_phi[self.boundary_mask]**2) / self.RR[self.boundary_mask]
                     )
                     + dP_dr[self.boundary_mask]
                 )
@@ -266,11 +265,11 @@ class mcgv:
                 return dvr
 
             case 'vth': # Polar equation
-                dv_th_dr         = np.zeros_like(self.v_theta) / np.ones_like(self.DRR)
-                dv_th_dr[1:-1,:] = (self.v_theta[2:,:] - self.v_theta[:-2,:]) / (2 * self.DRR[1:-1,:])
+                dv_th_dr         = np.zeros_like(self.v_thetasph) / np.ones_like(self.DRR)
+                dv_th_dr[1:-1,:] = (self.v_thetasph[2:,:] - self.v_thetasph[:-2,:]) / (2 * self.DRR[1:-1,:])
 
-                dv_th_dtheta         = np.zeros_like(self.v_theta) / np.ones_like(self.TT)
-                dv_th_dtheta[:,1:-1] = (self.v_theta[:,2:] - self.v_theta[:,:-2]) / (2 * self.dthsph)
+                dv_th_dtheta         = np.zeros_like(self.v_thetasph) / np.ones_like(self.TT)
+                dv_th_dtheta[:,1:-1] = (self.v_thetasph[:,2:] - self.v_thetasph[:,:-2]) / (2 * self.dthsph)
 
                 dP_dth         = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne / u.cm**2) / np.ones_like(self.TT)
                 dP_dth[:,1:-1] = (self.P_total[:,2:] - self.P_total[:,:-2]) / (2 * self.dthsph)
@@ -281,9 +280,9 @@ class mcgv:
 
                 lhs_th[self.boundary_mask] = (
                     self.mass_density[self.boundary_mask] * self.specific_enthaply[self.boundary_mask] * self.lorentz_factor[self.boundary_mask]**2 *
-                    (self.v_r[self.boundary_mask] * dv_th_dr[self.boundary_mask]
-                     + self.v_theta[self.boundary_mask] * u.rad / self.RR[self.boundary_mask] * dv_th_dtheta[self.boundary_mask]
-                     + (self.v_r[self.boundary_mask] * self.v_theta[self.boundary_mask]) / self.RR[self.boundary_mask]
+                    (self.v_rsph[self.boundary_mask] * dv_th_dr[self.boundary_mask]
+                     + self.v_thetasph[self.boundary_mask] * u.rad / self.RR[self.boundary_mask] * dv_th_dtheta[self.boundary_mask]
+                     + (self.v_rsph[self.boundary_mask] * self.v_thetasph[self.boundary_mask]) / self.RR[self.boundary_mask]
                      - (self.v_phi[self.boundary_mask]**2) * self.cotth[self.boundary_mask] / self.RR[self.boundary_mask]
                     )
                     + (1 * u.rad/self.RR[self.boundary_mask]) * dP_dth[self.boundary_mask]
@@ -308,10 +307,10 @@ class mcgv:
 
                 lhs_phi[self.boundary_mask] = (
                     self.mass_density[self.boundary_mask] * self.specific_enthaply[self.boundary_mask] * self.lorentz_factor[self.boundary_mask]**2 *
-                    (self.v_r[self.boundary_mask] * dv_phi_dr[self.boundary_mask]
-                     + (self.v_theta[self.boundary_mask] * u.rad / self.RR[self.boundary_mask]) * dv_ph_dtheta[self.boundary_mask]
-                     + (self.v_r[self.boundary_mask] * self.v_phi[self.boundary_mask]) / self.RR[self.boundary_mask]
-                     + (self.v_theta[self.boundary_mask] * self.v_phi[self.boundary_mask]) * self.cotth[self.boundary_mask] / self.RR[self.boundary_mask]
+                    (self.v_rsph[self.boundary_mask] * dv_phi_dr[self.boundary_mask]
+                     + (self.v_thetasph[self.boundary_mask] * u.rad / self.RR[self.boundary_mask]) * dv_ph_dtheta[self.boundary_mask]
+                     + (self.v_rsph[self.boundary_mask] * self.v_phi[self.boundary_mask]) / self.RR[self.boundary_mask]
+                     + (self.v_thetasph[self.boundary_mask] * self.v_phi[self.boundary_mask]) * self.cotth[self.boundary_mask] / self.RR[self.boundary_mask]
                     )
                 )
                 # For no explicit azimuthal torque: rhs = 0
@@ -325,87 +324,28 @@ class mcgv:
     
     ######################################################
     # Spherical r- and theta- components of the radiative force per unit mass
-    def _f_rad_r(self):
+    def _f_rad_r(self,
+                 ntabs = 0
+                 ):
         return ((const.G.cgs * self.mypars.mbh * self.mass_density / self.RR**2) * ( (self.rf/self.RR) * (1 - self.modified_Gamma) + self.modified_Gamma * self.Mrgrid ) )
 
-    def _f_rad_th(self):
-        return ((const.G.cgs * self.mypars.mbh * self.mass_density / self.RR**2) * ( (self.rf/self.RR) * (1 - self.modified_Gamma) * self.cotth - (self.z0_for_rf/self.RR) * self.squiggle * self.Mthetagrid ) )
+    def _f_rad_th(self,
+                  ntabs = 0
+                  ):
+        f_rad = ((const.G.cgs * self.mypars.mbh * self.mass_density / self.RR**2) * ( (self.rf/self.RR) * (1 - self.modified_Gamma) * self.cotth - (self.z0_for_rf/self.RR) * self.squiggle * self.Mthetagrid ) )
+        if np.any(np.isfinite(f_rad) == False):
+            print("\t" * ntabs + f"f_rad has Nans:")
+            print("\t" * ntabs + f"mass density = {self.mass_density}")
+            print("\t" * ntabs + f"RR = {self.RR}")
+            print("\t" * ntabs + f"rf = {self.rf}")
+            print("\t" * ntabs + f"z0_for_rf = {self.z0_for_rf}")
+            print("\t" * ntabs + f"squiggle = {self.squiggle}")
+            print("\t" * ntabs + f"Mthetagrid = {self.Mthetagrid}")
+            input("Find it")
+        return f_rad
 
     ######################################################
-    def getcloudy(self,cloudypath):
-        fu = (u.erg / (u.s * u.cm * u.cm * u.Hz))
-
-        emfile = f"Sbh{self.mydisk.sbh:.2f}-MBH{np.log10(self.mydisk.mbh.to(u.Msun).value):.2f}-Mdot{self.mydisk.mdot.to(u.Msun/u.year).value:.1f}-emission.fits"
-        print(f"Looking for {emfile}")
-        if os.path.exists(emfile):
-            with fits.open(emfile) as hdu:
-                emdatatab = hdu[1].data
-            gridx = emdatatab['gridr']
-            gridy = emdatatab['gridz']
-            self.lognuFnugrid = emdatatab['lognuFnu']
-            self.emissiongrid = emdatatab['emgrid']
-
-            print(f"Read in {emfile} with max lognuFnu = {np.max(self.lognuFnugrid)} and {np.max(self.emissiongrid)}")
-        else:
-            print(f"nope")
-            self.emissiongrid = np.zeros((self.mypars.nr,self.ntheta,6))
-            self.lognuFnugrid = np.zeros((self.mypars.nr,self.ntheta))
-            gridr, gridtheta = np.meshgrid(self.mydisk.rstar,self.theta, indexing='ij')
-            gridx = gridr * np.sin(gridtheta)
-            gridy = gridr * np.cos(gridtheta)
-
-                    
-        for i in range(self.mypars.nr):  # Spherical r
-            thetadx = np.extract((self.mydisk.rstar[i] * np.cos(self.theta) >= np.interp(self.mydisk.rstar[i] * np.sin(self.theta), self.mydisk.rstar, self.mydisk.zt1)) & 
-                                 (self.mydisk.rstar[i] * np.sin(self.theta) >  np.min(self.mydisk.rstar)),
-                                 range(self.theta.size)
-                                 )
-            print(f"\t\tFor rstar[{i}]={self.mydisk.rstar[i]}, running Cloudy for {thetadx.size} theta bins at {np.min(self.theta[thetadx]).to(u.degree)} to {np.max(self.theta[thetadx]).to(u.degree)}")
-            if thetadx.size > 0:
-                list_of_lognuFnu_linarray_tuples = []
-                with Pool() as pool:
-                    poolinput = []
-                    for procnum in range(thetadx.size):
-                        poolinput.append( (i,thetadx[procnum], gridx[i,thetadx[procnum]], gridy[i,thetadx[procnum]], cloudypath) )
-                    list_of_lognuFnu_linarray_tuples = pool.starmap(self._cloudypool, poolinput)
-                j = -1
-                for (lognuFnu, linarray) in list_of_lognuFnu_linarray_tuples:
-                    j += 1
-                    self.lognuFnugrid[i,thetadx[j]] = lognuFnu
-                    self.linarray = linarray
-                    print(f"\t\t{self._getprint(i,thetadx[j],gridx,gridy)}")
-                emtab = Table(data=(gridx, gridy, self.lognuFnugrid, self.emissiongrid), names=['gridr','gridz','lognuFnu','emgrid'])
-                emtab.write(emfile, format='fits', overwrite=True)
-
-            harr = np.extract(self.lognuFnugrid > 0, self.emissiongrid[:,:,0])
-            narr = np.extract(self.lognuFnugrid > 0, self.emissiongrid[:,:,2])
-            carr = np.extract(self.lognuFnugrid > 0, self.emissiongrid[:,:,4])
-
-            if harr.size > 0:
-                red   = 1.0 - (harr-np.min(harr)) / (np.max(harr)-np.min(harr))
-                green = 1.0 - (narr-np.min(narr)) / (np.max(narr)-np.min(narr))
-                blue  = 1.0 - (carr-np.min(carr)) / (np.max(carr)-np.min(carr))
-
-                gridc = [tuple(row) for row in np.array([red.T,green.T,blue.T]).T.reshape(harr.size,3)]
-
-                plt.clf()
-                plt.plot(self.mydisk.rstar, self.mydisk.diskheight)
-                plt.plot(self.mydisk.rstar, self.mydisk.zt1)
-                plt.scatter(np.extract(self.lognuFnugrid > 0, gridx),
-                            np.extract(self.lognuFnugrid > 0, gridy),
-                            c = gridc,
-                            s = np.extract(self.lognuFnugrid > 0, self.lognuFnugrid))
-                plt.ylim(bottom = np.min(self.mydisk.zt1))
-                plt.xlim(left = np.min(self.mydisk.rstar))
-                plt.xscale("log")
-                plt.yscale("log")
-                plt.show(block=False)
-                plt.pause(0.001)
-            else:
-                print(f"No emission found in grid????? {np.max(self.lognuFnugrid)}")
-
-    ######################################################
-    # Can we use the velocity gradients to determine the footpoints?
+    # Use the velocity gradients to determine the footpoints
     # rf values are cylindrical-r's but assigned for every cell
     # Have to trace the directions of the velocity vectors backwards, and find where the trace intercepts the photosphere (zt1)
     # We really only need to know, for every cell, from which cell did the gas come from. Then we can trace back to the photosphere
@@ -417,33 +357,38 @@ class mcgv:
         rfrcyl_arr        = rfr_arr * np.sin(rft_arr.value)
         z0_for_rfrcyl_arr = np.interp(rfrcyl_arr, self.rsph_grid, self.z0)
 
-        which_cells         = np.copy(self.boundary_mask)
-        too_far_list        = np.copy(self.boundary_mask)
-        not_far_enough_list = np.copy(self.boundary_mask)
-        drf_arr        = (np.ones_like(self.RR) * u.year / u.cm).to(u.s)
+        vmag = np.sqrt(self.v_rsph*self.v_rsph + self.v_thetasph*self.v_thetasph)
+
+        which_cells         = self.boundary_mask & (vmag > 0 * (u.cm/u.s))
+        too_far_list        = np.copy(which_cells)
+        not_far_enough_list = np.copy(which_cells)
+        dt_arr        = (np.ones_like(self.RR) * u.year / u.cm).to(u.s)
 
         rfiteration = 0
         rfreallydone = False
         while not rfreallydone:
             rfdone = False
             while not rfdone:
-                too_far_list[which_cells] = (np.fabs(drf_arr[which_cells] * self.v_r[which_cells]) >= 2. * self.DRR[which_cells]) | (np.fabs(drf_arr[which_cells] * self.v_theta[which_cells]/self.RR[which_cells]) >= 2. * self.dthsph.value)
-                drf_arr[too_far_list] *= 0.99
+                too_far_list[which_cells] = (np.fabs(dt_arr[which_cells] * self.v_rsph[which_cells]) >= 2. * self.DRR[which_cells]) | \
+                    (np.fabs(dt_arr[which_cells] * self.v_thetasph[which_cells]/self.RR[which_cells]) >= 2. * self.dthsph.value)
+                dt_arr[too_far_list] *= 0.99
                 
-                not_far_enough_list[which_cells] = (np.fabs(drf_arr[which_cells] * self.v_r[which_cells]) <= self.DRR[which_cells]) & (np.fabs(drf_arr[which_cells] * self.v_theta[which_cells]/self.RR[which_cells]) <= self.dthsph.value)
-                drf_arr[not_far_enough_list] *= 1.01
-                
+                not_far_enough_list[which_cells] = (np.fabs(dt_arr[which_cells] * self.v_rsph[which_cells]) <= self.DRR[which_cells]) & \
+                    (np.fabs(dt_arr[which_cells] * self.v_thetasph[which_cells]/self.RR[which_cells]) <= self.dthsph.value)
+                dt_arr[not_far_enough_list] *= 1.01
+
                 if not np.any(too_far_list[which_cells]) and not np.any(not_far_enough_list[which_cells]):
                     rfdone = True
-                    
-            rfr_arr[which_cells] -= drf_arr[which_cells] * self.v_r[which_cells]
-            rft_arr[which_cells] -= drf_arr[which_cells] * self.v_theta[which_cells] * u.rad / self.RR[which_cells]
+
+            rfr_arr[which_cells] -= dt_arr[which_cells] * self.v_rsph[which_cells]
+            rft_arr[which_cells] -= dt_arr[which_cells] * self.v_thetasph[which_cells] * u.rad / self.RR[which_cells]
 
             rfz_arr[which_cells]    = rfr_arr[which_cells] * np.cos(rft_arr[which_cells].value)
             rfrcyl_arr[which_cells] = rfr_arr[which_cells] * np.sin(rft_arr[which_cells].value)
+
             z0_for_rfrcyl_arr[which_cells] = np.interp(rfrcyl_arr[which_cells], self.rsph_grid, self.z0)
 
-            which_cells = self.boundary_mask & (z0_for_rfrcyl_arr < rfz_arr)
+            which_cells = self.boundary_mask & (vmag > 0 * (u.cm/u.s)) & (z0_for_rfrcyl_arr < rfz_arr)
 
             if not np.any(which_cells):
                 rfreallydone = True
@@ -461,7 +406,9 @@ class mcgv:
         return rf,z0_for_rf
     
     ######################################################
-    def _mcgv_timer(self, t1):
+    def _mcgv_timer(self, 
+                    t1
+                    ):
         if tm.time() * u.s - t1 < 300 * u.s:
             return tm.time() * u.s - t1
         elif (tm.time() * u.s - t1).to(u.minute) < 60 * u.min:
@@ -471,51 +418,25 @@ class mcgv:
 
     ######################################################
     # Ideal gas law for gas pressure
-    def _P_gas(self):
+    def _P_gas(self,
+               ntabs = 0
+               ):
         return const.k_B.cgs * self.mass_density * self.temperature / const.u.cgs
 
     # Radiative force per unit mass for radiative pressure gradient
-    def _P_rad(self):
+    def _P_rad(self,
+               ntabs = 0):
         return (np.sqrt(self._f_rad_r()**2 + self._f_rad_th()**2) * self.DRR).decompose(bases=u.cgs.bases) 
 
     ######################################################
-    def _plot_velocity_field(self):
-
-        R, Theta = np.meshgrid(self.rstar, self.theta)
-
-        vr_val     = self.vr.to(u.km/u.s).value
-        vtheta_val = self.vtheta.to(u.km/u.s).value
-        vphi_val   = self.vphi.to(u.km/u.s).value
-
-        vr_plot     = vr_val.T
-        vtheta_plot = vtheta_val.T
-
-        Vx_cyl = vr_plot * np.sin(Theta.value) + vtheta_plot * np.cos(Theta.value)
-        Vz_cyl = vr_plot * np.cos(Theta.value) - vtheta_plot * np.sin(Theta.value)
-
-        X_cyl = R * np.sin(Theta)
-        Z_cyl = R * np.cos(Theta)
-
-        V_magnitude = np.sqrt(Vx_cyl**2 + Vz_cyl**2)
-
-        non_zero_mask = V_magnitude > 0
-        Vx_norm = np.zeros_like(Vx_cyl)
-        Vz_norm = np.zeros_like(Vz_cyl)
-        Vx_norm[non_zero_mask] = Vx_cyl[non_zero_mask] / V_magnitude[non_zero_mask]
-        Vz_norm[non_zero_mask] = Vz_cyl[non_zero_mask] / V_magnitude[non_zero_mask]
-
-        plt.quiver(X_cyl, Z_cyl, Vx_norm, Vz_norm, V_magnitude,
-                   cmap='viridis', headlength=4, headwidth=3, pivot='middle', scale_units='xy', scale=0.5)
-        plt.colorbar(label='Velocity Magnitude (km/s)')
-
-    ######################################################
-    def projectvlos(self):
+    def projectvlos(self,
+                    ntabs = 0
+                    ):
         # The (Cartesian) vector pointing to Theo is
         r_Theo = np.array([self.mydisk.robs * np.cos(self.mydisk.thetaobs),
                            self.mydisk.robs * np.sin(self.mydisk.thetaobs),
                            self.mydisk.zobs])
 
-        
         # Need to take the dot product of the velocity vector field with the direction of Theo (from each of the cells!)
         # Want to convert spherical (vr,vtheta,vphi) to cartesian (vx,vy,vz)
         # https://en.wikipedia.org/wiki/Vector_fields_in_cylindrical_and_spherical_coordinates#Vector_fields_2 says howto do this.
@@ -546,44 +467,106 @@ class mcgv:
 
 
     ######################################################
-    def _sanity_check(self,arrstr,arr):
+    def _sanity_check(self,
+                      arrstr,
+                      arr,
+                      ntabs = 0
+                      ):
         sanity = True
         if not np.all(np.isfinite(arr)):
-            print(f'\t\t\tNaN values in {arrstr} = {arr}')
+            print("\t" * ntabs + f'\t\t\tNaN values in {arrstr} = {arr}')
             sanity = False
         return sanity
 
     ######################################################
+    def shield_optical_depth(self,
+                             shield_cells,
+                             energy,
+                             ntabs = 0
+                             ):
+        shield_optical_depth = np.zeros(energy.shape)
+        #shield_cell_indices = np.argwhere(shield_cells)
+
+        for shield_cell_column_densities in self.column_density_table_grid[shield_cells,:]:
+            for k in range(self.myatoms.photo_Z.size):
+                spec_column_density = shield_cell_column_densities[k]
+                if spec_column_density > 0:
+                    energy_mask = (energy > self.myatoms.photo_E_th[k]) & (energy < self.myatoms.photo_E_max[k])
+
+                    x = energy[energy_mask] / (self.myatoms.photo_E_0[k] - self.myatoms.photo_y_0[k])
+                    y = np.sqrt(x**2 + self.myatoms.photo_y_w[k]**2)
+
+                    aa = (x-1)**2 + self.myatoms.photo_y_w[k]**2
+                    bb = np.power(y, 0.5*(self.myatoms.photo_p[k]-11))
+                    cc = np.power(1 + np.sqrt(y / self.myatoms.photo_y_a[k]), self.myatoms.photo_p[k])
+
+                    cross_section = self.myatoms.photo_sig_0[k] * aa * bb * cc
+
+                    try:
+                        shield_optical_depth[energy_mask] += (cross_section * spec_column_density).decompose()
+                    except:
+                        print("\t" * ntabs + f"{shield_optical_depth[energy_mask]} += {cross_section} * {spec_column_density}")
+                        input("paused")
+
+        return shield_optical_depth
+
+    ######################################################
+    # Need to use R_vec to extract cells that are intercepted and determine optical depth attentuating the X-rays
+    # A = self.mycorona_position_vec + a x R_vec (a = 0..1) parameterizes the sightline
+    # D = A - rcell_vecs = vector from rcell_vecs to a point on A
+    # Want a that minimizes the magnitude of D:
+    # D^2 = (A - rcell_vecs)*(A - rcell_vecs) = A*A + rcell_vecs*rcell_vecs - 2 A * rcell_vecs
+    #     = self.mycorona_position_vec*self.mycorona_position_vec + a^2 x R_vec*R_vec + 2 a self.mycorona_position_vec*R_vec 
+    #                                       + rcell_vecs*rcell_vecs - 2 self.mycorona_position_vec*rcell_vecs - 2 a x R_vec*rcell_vecs
+    # 2D (dD/da) = 2a R_vec*R_vec + 2 self.mycorona_position_vec*R_vec - 2 R_vec*rcell_vecs = 0 to minimize
+    # a = (rcell_vecs - self.mycorona_position_vec) * R_vec  / (R_vec * R_vec)
+    def shield_poke_sightline(self,
+                              robs_vec,
+                              R_vec,
+                              ntabs = 0
+                              ):
+        gg = self.rcell_vecs - robs_vec[:,None,None]
+        a = np.sum(gg * R_vec[:,None,None], axis=0 ) / np.sum(R_vec * R_vec)
+        D = robs_vec[:,None,None] + a * R_vec[:,None,None] - self.rcell_vecs
+        Dmag = np.sqrt(np.sum( D * D, axis=0))
+
+        #                             | "along" sightline |
+        shield_cells = self.in_shield & (a > 0) & (a < 1) & (Dmag < self.DRR / self.mydisk.rg)
+        #                                                 | intersecting sightline
+
+        return shield_cells
+
+    ######################################################
     # Produces the dumstr for printing out a line with H I, N V, and C IV emission lines
     # Also packs self.emissiongrid
-    def _getprint(self,i,j,gridx,gridy):
-        lyalin = np.extract(self.linarray['ID'] == 'H  1                1215.67A', self.linarray)
-        dumstr = f"            {self.mydisk.rstar[i]} {self.theta[j].to(u.degree)} {gridx[i,j]} {gridy[i,j]} {self.lognuFnugrid[i,j]}"
-        if lyalin.size > 0:
-            self.emissiongrid[i,j,0] = lyalin[0][2]
-            dumstr += f"   H I: {lyalin[0][2]}"
-            lyblin = np.extract(self.linarray['ID'] == 'H  1                1025.72A', self.linarray)
-            if lyblin.size > 0:
-                self.emissiongrid[i,j,1] = lyblin[0][2]
-                dumstr += f" {lyblin[0][2]}"
+    #def _getprint("\t" * ntabs + self,i,j,gridx,gridy):
+    #    lyalin = np.extract(self.linarray['ID'] == 'H  1                1215.67A', self.linarray)
+    #    dumstr = f"            {self.mydisk.rstar[i]} {self.theta[j].to(u.degree)} {gridx[i,j]} {gridy[i,j]} {self.lognuFnugrid[i,j]}"
+    #    if lyalin.size > 0:
+    #        self.emissiongrid[i,j,0] = lyalin[0][2]
+    #        dumstr += f"   H I: {lyalin[0][2]}"
+    #        lyblin = np.extract(self.linarray['ID'] == 'H  1                1025.72A', self.linarray)
+    #        if lyblin.size > 0:
+    #            self.emissiongrid[i,j,1] = lyblin[0][2]
+    #            dumstr += f" {lyblin[0][2]}
 
-        nvb = np.extract(self.linarray['ID'] == 'N  5                1238.82A', self.linarray)
-        if nvb.size > 0:
-            self.emissiongrid[i,j,2] = nvb[0][2]
-            dumstr += "   N V: "
-            dumstr += f"{nvb[0][2]}"
-            nvr = np.extract(self.linarray['ID'] == 'N  5                1242.80A', self.linarray)
-            if nvr.size > 0:
-                self.emissiongrid[i,j,3] = nvr[0][2]
-                dumstr += f" {nvr[0][2]}"
+    #    nvb = np.extract(self.linarray['ID'] == 'N  5                1238.82A', self.linarray)
+    #    if nvb.size > 0:
+    #        self.emissiongrid[i,j,2] = nvb[0][2]
+    #        dumstr += "   N V: "
+    #        dumstr += f"{nvb[0][2]}"
+    #        nvr = np.extract(self.linarray['ID'] == 'N  5                1242.80A', self.linarray)
+    #        if nvr.size > 0:
+    #            self.emissiongrid[i,j,3] = nvr[0][2]
+    #            dumstr += f" {nvr[0][2]}"
                                     
-        civb = np.extract(self.linarray['ID'] == 'C  4                1548.19A', self.linarray)
-        if civb.size > 0:
-            self.emissiongrid[i,j,4] = civb[0][2]
-            dumstr += f"   C IV: {civb[0][2]}"
-            civr = np.extract(self.linarray['ID'] == 'C  4                1550.77A', self.linarray)
-            if civr.size > 0:
-                self.emissiongrid[i,j,5] = civr[0][2]
-                dumstr += f" {civr[0][2]}"
+    #    civb = np.extract(self.linarray['ID'] == 'C  4                1548.19A', self.linarray)
+    #    if civb.size > 0:
+    #        self.emissiongrid[i,j,4] = civb[0][2]
+    #        dumstr += f"   C IV: {civb[0][2]}"
+    #        civr = np.extract(self.linarray['ID'] == 'C  4                1550.77A', self.linarray)
+    #        if civr.size > 0:
+    #            self.emissiongrid[i,j,5] = civr[0][2]
+    #            dumstr += f" {civr[0][2]}"
 
-        return dumstr
+    #    return dumstr
