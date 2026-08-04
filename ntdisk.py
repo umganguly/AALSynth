@@ -139,7 +139,10 @@ from tqdm                    import tqdm
 ######################################################
 class ntdisk:
     ######################################################
-    def __init__(self, mypars):
+    def __init__(self, 
+                 mypars,
+                 ntabs = 0
+                 ):
         self.mypars      = mypars
         self.robs        = None
         self.zobs        = None
@@ -180,7 +183,11 @@ class ntdisk:
         self.ntheta = np.ceil(2.0 * np.pi * self.rstar / (self.mypars.dtheta_fac * self.deltar))
 
     ######################################################
-    def diskgravity(self,robs,zobs): # robs and zobs in normal units (not rg)
+    def diskgravity(self,
+                    robs,
+                    zobs,
+                    ntabs = 0
+                    ): # robs and zobs in normal units (not rg)
         fr = np.zeros(robs.size) * u.cm / u.s**2
         fz = np.zeros(robs.size) * u.cm / u.s**2
         for rdx in range(self.mypars.nr):
@@ -217,7 +224,8 @@ class ntdisk:
     # Want to have fluxrt = self.fnudiskannlus(frequency,r) which will have shape (frequency.size,self.ntheta[r],self.robs.size)
     def fnudiskannulus(self,
                        frequency,
-                       r
+                       r,
+                       ntabs = 0
                        ):
         fu = u.erg / (u.s * u.cm * u.cm * u.Hz)
         ntr = np.int16(self.ntheta[r])
@@ -246,8 +254,8 @@ class ntdisk:
         try:
             R_vec = robs_vec[:,None,:] - rdisk_vec[:,:,None] # shape (3,ntr,self.robs.size)
         except:
-            print("0 ",robs_vec.shape)
-            print("1 ",rdisk_vec.shape)
+            print("\t" * ntabs + "0 ",robs_vec.shape)
+            print("\t" * ntabs + "1 ",rdisk_vec.shape)
             input("Paused")
         self.Rmag = np.sqrt(np.sum(R_vec*R_vec, axis=0)) # shape (ntr,self.robs.size)
         # Component for posterity
@@ -285,10 +293,12 @@ class ntdisk:
         return fluxrtnu
 
     ######################################################
-    def makedisk(self):
+    def makedisk(self,
+                 ntabs = 0
+                 ):
         mstar    = (self.mypars.mbh / (3.0 * const.M_sun.cgs)).decompose()
         mdotstar = (self.mypars.mdot / (1.0e+17 * u.g / u.s)).decompose()
-        print(f"\t\tM* = {mstar:e}, Mdot* = {mdotstar:e}  Rg = {self.rg:e}  mdotstar = {mdotstar:e}")
+        print("\t" * ntabs + f"M* = {mstar:e}, Mdot* = {mdotstar:e}  Rg = {self.rg:e}  mdotstar = {mdotstar:e}")
         ######################################################
         y     = np.sqrt(self.rstar)
         ######################################################
@@ -361,20 +371,24 @@ class ntdisk:
         ######################################################
         self.x1 = self.rstar[pdx[0]]
         self.x2 = self.rstar[tdx[0]]
-        print(f'\t\tPressure change at {round(self.x1)} rg ({self.x1*self.rg})  Optical depth change at {round(self.x2)} rg ({self.x2*self.rg})')
+        print("\t" * ntabs + f'Pressure change at {round(self.x1)} rg ({self.x1*self.rg})  Optical depth change at {round(self.x2)} rg ({self.x2*self.rg})')
 
     ######################################################
-    def photosphere(self,makeplot=False,overwrite=False):
+    def photosphere(self,
+                    makeplot=False,
+                    overwrite=False,
+                    ntabs = 0
+                    ):
         self.zt1 = np.empty(0)
         filename = self.mypars.datapath+f"Sbh{self.mypars.sbh}-MBH{np.log10(self.mypars.mbh / const.M_sun):.2f}-Mdot{(self.mypars.mdot/(const.M_sun/u.year)).decompose()}-alpha{self.mypars.viscosity_alpha}.fits"
         if os.path.isfile(filename) and not overwrite:
-            print("\tReading "+filename)
+            print("\t" * ntabs + "Reading "+filename)
             data = Table.read(filename, format="fits")
             self.zt1 = np.array(data['zt1'])
             self.tempt1 = np.array(data['tempt1']) * u.K
             self.denst1 = np.array(data['denst1']) / u.cm**3
         else:
-            print("\tWriting "+filename)
+            print("\t" * ntabs + "Writing "+filename)
             self.zt1  = np.zeros(self.rstar.size)
             self.dzdr = np.empty(self.rstar.size)
             self.tempt1 = np.empty(self.rstar.size) * u.Kelvin
@@ -388,7 +402,7 @@ class ntdisk:
                 output_phot_tuple = pool.map_async(self._phot_calc_annulus, pool_tuple_input)
                 output_phot_tuple.wait()
                 
-                for (i, zt1i, tempt1i, denst1i) in tqdm(output_phot_tuple.get(), desc="\t\tPhotosphering...", ncols=0):
+                for (i, zt1i, tempt1i, denst1i) in tqdm(output_phot_tuple.get(), desc="\tPhotosphering...", ncols=0):
                     self.zt1[i]    = zt1i 
                     self.tempt1[i] = tempt1i
                     self.denst1[i] = denst1i               
@@ -407,7 +421,10 @@ class ntdisk:
         self.tempt1cs = CubicSpline(self.rstar,self.tempt1)
 
     ######################################################
-    def _phot_calc_annulus(self, i):
+    def _phot_calc_annulus(self, 
+                           i,
+                           ntabs = 0
+                           ):
         nit = 0
         zlo = 1.0e-4
         zhi = 1.0e+2
@@ -458,7 +475,12 @@ class ntdisk:
         return i, zt1i, tempt1i, denst1i
 
     ######################################################
-    def pltdisk(self,i=0,photosphere=True,ctype='k'):
+    def pltdisk(self,
+                i=0,
+                photosphere=True,
+                ctype='k',
+                ntabs = 0
+                ):
         try:
             plt.clf()
         except:
@@ -503,7 +525,11 @@ class ntdisk:
         plt.pause(0.001)
 
     ######################################################
-    def surfdens(self, z, i_annulus): #z0, rho0:
+    def surfdens(self, 
+                 z, 
+                 i_annulus,
+                 ntabs = 0
+                 ): #z0, rho0:
         s   = np.empty(z.size)
         udx = np.extract(z <= self.diskheight[i_annulus] * self.rg, np.arange(0,s.size,1))
         vdx = np.extract(z > self.diskheight[i_annulus] * self.rg,  np.arange(0,s.size,1))
@@ -515,7 +541,11 @@ class ntdisk:
 
     ######################################################
     # This is for a range of z values at a given i_annulus. [z = array, i_annulus = scalar]
-    def verticaldensity(self, z, i_annulus):
+    def verticaldensity(self, 
+                        z, 
+                        i_annulus,
+                        ntabs = 0
+                        ):
         if z.size > 1:
             rho  = self.density[i_annulus] * np.zeros(z.size)
             udx = np.extract(z <= self.diskheight[i_annulus], np.arange(0,rho.size,1))
@@ -532,7 +562,11 @@ class ntdisk:
         return rho
 
     # This is for a range of z values and an array of i_annulus. Assumes both have the same dimension
-    def verticaldensity2(self, z, i_annul):
+    def verticaldensity2(self, 
+                         z, 
+                         i_annul,
+                         ntabs = 0
+                         ):
         rho = np.zeros(z.size) / (u.cm**3)
         if z.size > 1:
           for i in range(z.size):
@@ -543,7 +577,10 @@ class ntdisk:
         return rho
 
     # This is for a range of z values and an array of r. Assumes both are 1d witht he same size
-    def verticaldensity3(self, z, r):
+    def verticaldensity3(self, 
+                         z, 
+                         r,
+                         ntabs = 0):
         # Determine the annuli corresponding to the values in r. Then can call verticaldensity2
         r2d              = np.transpose(np.broadcast_to(r,                          (self.rstar.size,r.size)))
         rstar2d          =              np.broadcast_to(self.rstar-0.5*self.drstar, (r.size,self.rstar.size))
@@ -554,11 +591,18 @@ class ntdisk:
         return rho
 
     # This is for interpolating the density grid for a particular value of r and z
-    def verticaldensity_onepoint(self,r,z):
+    def verticaldensity_onepoint(self,
+                                 r,
+                                 z,
+                                 ntabs = 0):
         return np.interp(r, self.rstar, self.verticaldensity2(np.broadcast_to(z, self.rstar.shape), range(self.mypars.nr)))
 
     ######################################################
-    def verticaltemperature(self, z, i_annulus):
+    def verticaltemperature(self, 
+                            z, 
+                            i_annulus,
+                            ntabs = 0
+                            ):
         zp = np.append(z,100.0*self.diskheight[i_annulus])  * self.rg
         sd = self.surfdens(zp,i_annulus)
         sd0 = 2.0 * np.squeeze(sd[sd.size-1])
@@ -567,7 +611,11 @@ class ntdisk:
         return self.temperature[i_annulus] * np.power(sdr, 0.25)
 
     # This is for a range of z values and an array of i_annulus. Assumes both have the same dimension
-    def verticaltemperature2(self, z, i_annul):
+    def verticaltemperature2(self, 
+                             z, 
+                             i_annul,
+                             ntabs = 0
+                             ):
         temperature = np.zeros(z.size) * u.K
         for i in range(z.size):
             temperature[i] = self.verticaltemperature(z[i],i_annul[i])
@@ -575,7 +623,11 @@ class ntdisk:
         return temperature
 
     # This is for a range of z values and an array of r. Assumes both are 1d with the same size
-    def verticaltemperature3(self, z, r):
+    def verticaltemperature3(self, 
+                             z, 
+                             r,
+                             ntabs = 0
+                             ):
         # Determine the annuli corresponding to the values in r. Then can call verticaldensity2
         r2d              = np.transpose(np.broadcast_to(r,                          (self.rstar.size,r.size)))
         rstar2d          =              np.broadcast_to(self.rstar-0.5*self.drstar, (r.size,self.rstar.size))
@@ -586,8 +638,11 @@ class ntdisk:
         return temperature
 
     # This is for interpolating the temperature grid for a particular value of r and z
-    def verticaltemperature_onepoint(self,r,z):
+    def verticaltemperature_onepoint(self,
+                                     r,
+                                     z,
+                                     ntabs = 0
+                                     ):
         vtemp2 = self.verticaltemperature2(np.broadcast_to(z, self.rstar.shape), np.arange(self.mypars.nr))
         return np.interp(r, self.rstar, vtemp2)
     ######################################################
-

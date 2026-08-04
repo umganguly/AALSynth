@@ -64,7 +64,11 @@ from astropy.modeling.functional_models import Voigt1D
 class atomic:
     ###############################################################################################
 
-    def __init__(self,basedir,wlo,whi,minlox=8.5):
+    def __init__(self,basedir,
+                 wlo,
+                 whi,
+                 minlox=8.5,
+                 ntabs = 0):
         datfile = "atoms4.dat"
         self.minlox = minlox
         if (os.path.exists(basedir+"/"+datfile)):
@@ -116,10 +120,26 @@ class atomic:
             self.flam = self.f * self.wave
 
         else:
-            print(basedir+'/'+datfile," does not exist")
+            print("\t" * ntabs + basedir+'/'+datfile," does not exist")
+
+        datfile = "photo.dat"
+        if (os.path.exists(basedir+"/"+datfile)):
+          data = ascii.read(basedir+"/"+datfile,format='no_header')
+          self.photo_Z     = data['col1']
+          self.photo_N     = data['col2']
+          self.photo_E_th  = data['col3'] * u.eV
+          self.photo_E_max = data['col4'] * u.eV
+          self.photo_E_0   = data['col5'] * u.eV
+          self.photo_sig_0 = data['col6'] * u.Mbarn
+          self.photo_y_a   = data['col7']
+          self.photo_p     = data['col8']
+          self.photo_y_w   = data['col9']
+          self.photo_y_0   = data['col10'] * u.eV
+          self.photo_y_1   = data['col11']
+        else:
+            print("\t" * ntabs + basedir+'/'+datfile," does not exist")
 
     ###############################################################################################
-
     def getspecies(self,anum,ion):
         return np.extract((self.anum == anum) & (self.ion == ion), range(self.anum.size))
 
@@ -205,79 +225,6 @@ class atomic:
         else:
             return 'nope'
 
-    ###############################################################################################
-  #  def tauion(self,wave,anum,ion,tau0,b,v):
-  #      idx = np.where((self.anum == anum) & (self.ion == ion))[0]
-  #      tau_profile = np.zeros(wave.size)
-  #      for i in idx:
-  #          vv  = np.squeeze(calcvel(wave.to(u.Angstrom), self.wave[i].to(u.Angstrom))).to(u.cm/u.s)
-  #          dvel = ((vv - v) / b).decompose()
-  #          dvel_mask = np.fabs(dvel) < 100.0
-  #          if self.gamma[i].value > 0:
-  #              a = (self.gamma[i] * self.wave[i] / b).decompose()
-  #              V1   = Voigt1D(x_0         = 0,           # These are the parameters of a normalized Voigt profile centered at 0
-  #                             amplitude_L = 1/(np.pi * a),
-  #                             fwhm_L      = 2 * a,
-  #                             fwhm_G      = 2 * Voigt1D.sqrt_ln2
-  #                             )
-  #              V2 = V1(dvel[dvel_mask])
-  #              if len(V2.shape) > 1:
-  #                  V2 = np.mean(V2, axis=1)
-  #              tau_profile[dvel_mask] += V2 * self.flam[i]/np.max(self.flam[idx])
-  #          else:
-  #              tau_profile[dvel_mask] += np.exp(-np.square(dvel[dvel_mask])) * self.flam[i]/np.max(self.flam[idx])
-
-  #      return tau0 * tau_profile
-
-  #  def tauion_old(self,wave,anum,ion,tau0,b,v):
-  #      nabs  = v.size
-  #      bb    = np.broadcast_to(b.to(u.cm/u.s).value, (wave.size,nabs)) * (u.cm/u.s)
-  #      vv    = np.broadcast_to(v.to(u.cm/u.s).value, (wave.size,nabs)) * (u.cm/u.s)
-  #      idx = np.extract((self.anum == anum) & (self.ion == ion), range(self.anum.size))
-  #      tau = np.zeros((wave.size,nabs))
-  #     for i in idx:
-  #          vvv  = np.squeeze(calcvel(wave.to(u.Angstrom), self.wave[i].to(u.Angstrom))).to(u.cm/u.s)
-  #          dvel = (np.transpose(np.broadcast_to(vvv.value, (nabs,wave.size))) * (u.cm/u.s) - vv) / bb
-  #          dvel_mask = np.fabs(dvel) < 100.0
-  #          if self.gamma[i].value > 0:
-  #              a = (self.gamma[i] * self.wave[i] / bb[dvel_mask]).decompose()
-  #              V1   = Voigt1D(x_0         = 0,
-  #                             amplitude_L = 1/(np.pi * a),
-  #                             fwhm_L      = 2 * a,
-  #                             fwhm_G      = 2 * Voigt1D.sqrt_ln2
-  #                             )
-  #              V2 = V1(dvel[dvel_mask])
-  #              tau[dvel_mask] += V2 * self.flam[i]/np.max(self.flam[idx])
-  #          else:
-  #              tau[dvel_mask] += np.exp(-np.square(dvel[dvel_mask])) * self.flam[i]/np.max(self.flam[idx])
-
-  #      return np.broadcast_to(tau0, (wave.size,nabs)) * tau
-
-
-  #  def tausingle(self,wave,idx,tau0,b,v):
-  #      nabs      = v.size
-  #      bb    = np.broadcast_to(b.to(u.cm/u.s).value, (wave.size,nabs)) * (u.cm/u.s)
-  #      vv    = np.broadcast_to(v.to(u.cm/u.s).value, (wave.size,nabs)) * (u.cm/u.s)
-  #      tau_base  = np.zeros((wave.size,nabs))
-
-  #      vvv  = np.squeeze(calcvel(wave.to(u.Angstrom), self.wave[idx].to(u.Angstrom))).to(u.cm/u.s)
-  #      dvel      = (np.transpose(np.broadcast_to(vvv.value, (nabs,wave.size))) * (u.cm/u.s) - vv) / bb
-
-  #      ion_mask = (self.anum == self.anum[idx]) & (self.ion == self.ion[idx])
-
-  #      if self.gamma[idx].value > 0:
-  #          a = (self.gamma[idx] * self.wave[idx] / bb).decompose()
-  #          V1   = Voigt1D(x_0         = 0,
-  #                         amplitude_L = 1/(np.pi * a),
-  #                         fwhm_L      = 2 * a,
-  #                         fwhm_G      = 2 * Voigt1D.sqrt_ln2
-  #                         )
-  #          tau_base += V1(dvel) * self.flam[idx] / np.max(self.flam[ion_mask])
-  #      else:
-  #          tau_base += np.exp(-np.square(dvel)) * self.flam[idx] / np.max(self.flam[ion_mask])
-
-  #      return np.broadcast_to(tau0, (wave.size,nabs)) * tau_base
-        
     ###############################################################################################
 
     def cloudyelem(self,anum):

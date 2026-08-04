@@ -29,6 +29,7 @@
 # readpars -- Add wind parameters?
 
 import os
+import re
 import sys
 import copy
 
@@ -38,6 +39,8 @@ import numpy              as np
 from AbsCloud            import AbsCloud
 from astropy             import constants as const
 from astropy             import units     as u
+from astropy.io          import ascii
+#from astropy.table       import Table
 from quasar              import Quasar
 from readpars            import readpars
 
