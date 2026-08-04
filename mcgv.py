@@ -159,6 +159,9 @@ class mcgv:
         self.adiabatic_index = 5./3.
         self.specific_enthaply = None
 
+        self.adiabatic_index = 5./3.
+        self.specific_enthaply = None
+
         if not os.path.exists(self.windfile):
             print("\t" * ntabs + f"Initializing velocity field")
             # --- Initial Fields ---
@@ -437,6 +440,7 @@ class mcgv:
                            self.mydisk.robs * np.sin(self.mydisk.thetaobs),
                            self.mydisk.zobs])
 
+        
         # Need to take the dot product of the velocity vector field with the direction of Theo (from each of the cells!)
         # Want to convert spherical (vr,vtheta,vphi) to cartesian (vx,vy,vz)
         # https://en.wikipedia.org/wiki/Vector_fields_in_cylindrical_and_spherical_coordinates#Vector_fields_2 says howto do this.
