@@ -107,8 +107,10 @@ class mcgv:
                 self.number_density   = self.mass_density / const.u.cgs
                 self.bounded = True
 
-            with fits.open(self.windfile, hdu=2) as hdul:
-                self.column_density_table_grid = hdul[1].data['column_density_grid'] / u.cm**2
+                try:
+                    self.column_density_table_grid = hdul[2].data['column_density_grid'] / u.cm**2
+                except:
+                    self.column_density_table_grid = np.zeros(self.RR.shape + (self.myatoms.photo_Z.size,)) / u.cm**2
 
         else:
             print("\t" * (ntabs+1) + f"Not found. Initializing r-theta mesh")
@@ -485,28 +487,32 @@ class mcgv:
                              ntabs = 0
                              ):
         shield_optical_depth = np.zeros(energy.shape)
-        #shield_cell_indices = np.argwhere(shield_cells)
 
         for shield_cell_column_densities in self.column_density_table_grid[shield_cells,:]:
-            for k in range(self.myatoms.photo_Z.size):
-                spec_column_density = shield_cell_column_densities[k]
-                if spec_column_density > 0:
-                    energy_mask = (energy > self.myatoms.photo_E_th[k]) & (energy < self.myatoms.photo_E_max[k])
 
-                    x = energy[energy_mask] / (self.myatoms.photo_E_0[k] - self.myatoms.photo_y_0[k])
-                    y = np.sqrt(x**2 + self.myatoms.photo_y_w[k]**2)
+            if np.any(shield_cell_column_densities > 0):
+                which_ions = np.argwhere(shield_cell_column_densities > 0)
 
-                    aa = (x-1)**2 + self.myatoms.photo_y_w[k]**2
-                    bb = np.power(y, 0.5*(self.myatoms.photo_p[k]-11))
-                    cc = np.power(1 + np.sqrt(y / self.myatoms.photo_y_a[k]), self.myatoms.photo_p[k])
+                for k in which_ions:
+                    spec_column_density = shield_cell_column_densities[k]
 
-                    cross_section = self.myatoms.photo_sig_0[k] * aa * bb * cc
+                    if spec_column_density > 0:
+                        energy_mask = (energy > self.myatoms.photo_E_th[k]) & (energy < self.myatoms.photo_E_max[k])
 
-                    try:
-                        shield_optical_depth[energy_mask] += (cross_section * spec_column_density).decompose()
-                    except:
-                        print("\t" * ntabs + f"{shield_optical_depth[energy_mask]} += {cross_section} * {spec_column_density}")
-                        input("paused")
+                        x = energy[energy_mask] / (self.myatoms.photo_E_0[k] - self.myatoms.photo_y_0[k])
+                        y = np.sqrt(x**2 + self.myatoms.photo_y_w[k]**2)
+
+                        aa = (x-1)**2 + self.myatoms.photo_y_w[k]**2
+                        bb = np.power(y, 0.5*(self.myatoms.photo_p[k]-11))
+                        cc = np.power(1 + np.sqrt(y / self.myatoms.photo_y_a[k]), self.myatoms.photo_p[k])
+
+                        cross_section = self.myatoms.photo_sig_0[k] * aa * bb * cc
+
+                        try:
+                            shield_optical_depth[energy_mask] += (cross_section * spec_column_density).decompose()
+                        except:
+                            print("\t" * ntabs + f"{shield_optical_depth[energy_mask]} += {cross_section} * {spec_column_density}")
+                            input("paused")
 
         return shield_optical_depth
 
@@ -531,7 +537,8 @@ class mcgv:
         Dmag = np.sqrt(np.sum( D * D, axis=0))
 
         #                             | "along" sightline |
-        shield_cells = self.in_shield & (a > 0) & (a < 1) & (Dmag < self.DRR / self.mydisk.rg)
+       #shield_cells = self.in_shield & (a > 0) & (a < 1) & (Dmag < self.DRR / self.mydisk.rg)
+        shield_cells =                  (a > 0) & (a < 1) & (Dmag < self.DRR / self.mydisk.rg)
         #                                                 | intersecting sightline
 
         return shield_cells

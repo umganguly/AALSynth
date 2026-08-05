@@ -149,7 +149,6 @@ class cloudy:
       try:
         subprocess.run(["rm", f"{self.mypars.datapath}Cloudy_runs/{self.rootname}.lin"])
         subprocess.run(["rm", f"{self.mypars.datapath}Cloudy_runs/{self.rootname}.col"])
-        subprocess.run(["rm", f"{self.mypars.datapath}Cloudy_runs/{self.rootname}.col2"])
       except:
         pass
     else:
@@ -166,13 +165,12 @@ class cloudy:
     fitsname = self.mypars.datapath+f"Cloudy_runs/{self.rootname}.fits"
     if os.path.exists(fitsname):
       if self.Abs_or_Em == 0: # Line-emitting gas
-        with fits.open(fitsname, hdu=1) as hdul:
+        with fits.open(fitsname) as hdul:
           self.ionization_parameter = float(hdul[1].header['ION_PARM'] )
           self.temperature          = float(hdul[1].header['TEMPERAT'] ) * u.K
           self.density              = float(hdul[1].header[ 'DENSITY'] ) / u.cm**3
           self.line_array           = hdul[1].data
-        with fits.open(fitsname, hdu=2) as hdul:
-          self.column_density_array = hdul[1].data / u.cm**2
+          self.column_density_array = hdul[2].data / u.cm**2
       else: # Absorbng gas
         data = Table.read(fitsname, format="fits")
         self.depth       = np.copy(data['depth']) * u.cm
@@ -239,21 +237,27 @@ class cloudy:
 
       line_array           = ascii.read(f"{self.rootname}.lin", format='commented_header', header_start=0, data_start=1, delimiter='\t', guess=False)
 
+      listless = []
       input_file  = f"{self.rootname}.col"
-      output_file = f"{self.rootname}.col2"
-      with open(input_file, "r", encoding="utf-8") as infile, \
-         open(output_file, "w", encoding="utf-8") as outfile:
+      with open(input_file, "r", encoding="utf-8") as infile:
           for line in infile:
-            # Remove all carat characters from the line
             cleaned_line = line.replace("^", "")
-            outfile.write(cleaned_line)
+            cc_line      = cleaned_line.replace("#column density", "")
+            listless.append(cc_line.split())
 
-      column_density_table = ascii.read(output_file, format='commented_header', header_start=0, data_start=1, delimiter='\t', guess=False)
+      column_density_dict = dict(zip(listless[0], listless[1]))
+
       for i in range(self.myatoms.photo_Z.size):
         specstr = self.myatoms.atomstr(self.myatoms.photo_Z[i])
         if self.myatoms.photo_Z[i] > self.myatoms.photo_N[i]:
-          specstr += f"+{self.myatoms.photo_Z[i] - self.myatoms.photo_N[i]}"
-        column_density_array[i] = column_density_table[specstr]
+          specstr += "+"
+          if self.myatoms.photo_Z[i] - self.myatoms.photo_N[i] > 1:
+            specstr += f"{self.myatoms.photo_Z[i] - self.myatoms.photo_N[i]}"
+        try:
+          column_density_array[i] = float(column_density_dict[specstr]) / u.cm**2
+        except KeyError:
+          print(f"Failing to find {specstr} in column_density_table:")
+          print(column_density_dict)
 
     else:
       temperature = 2.7 * u.K
@@ -267,10 +271,14 @@ class cloudy:
     table_hdu.header[ 'DENSITY'] = (       density.value,         'Density (cm**-3)' )
     hdul = fits.HDUList([fits.PrimaryHDU(), table_hdu])
     hdul.writeto(fitsfile, overwrite=True)
-    column_density_table = Table(data = (column_density_array),
-                                 names = ('column_densities')
-                                 )
-    column_density_table.write(fitsfile, format="fits", append=True)
+    try:
+      column_density_table = Table([column_density_array],
+                                   names = ['column_densities'] 
+                                   )
+      column_density_table.write(fitsfile, format="fits", append=True)
+    except ValueError:
+      print("Why ValueError?????")
+      print(column_density_array)
 
     if os.getcwd() == self.mypars.datapath+"Cloudy_runs":
       os.chdir("../")

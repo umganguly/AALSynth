@@ -1584,7 +1584,8 @@ class Quasar:
                                     (12, r'$\log \rho/$[cgs]',                                 np.log10(self.mywind.mass_density[:-1,:-1].value+1.0e-17)),
                                     (13, r'$M_\mathrm{r}$',                                                                  self.mywind.Mrgrid[:-1,:-1]),
                                     (14, r'$M_\mathrm{\theta}$',                                                         self.mywind.Mthetagrid[:-1,:-1]),
-                                    (16, r'Boundary/Shield Mask',                      self.mywind.in_shield[:-1,:-1]*self.mywind.boundary_mask[:-1,:-1])
+                                    (16, r'Boundary Mask',                                                            self.mywind.boundary_mask[:-1,:-1])
+                                   #(16, r'Boundary/Shield Mask',                      self.mywind.in_shield[:-1,:-1]*self.mywind.boundary_mask[:-1,:-1])
                                    #(11, r'$-\gamma g$ [km s$^{-2}]$',                                                                                    rgg_val),
                                    #(13, r'$\log |M_\mathrm{r}|$',      np.log10(    np.fabs(self.mywind.Mrgrid[:-1,:-1]) + 0.1*np.min(np.extract(self.mywind.Mrgrid > 0.0, self.mywind.Mrgrid)))),
                                    #(14, r'$\log |M_\mathrm{\theta}|$', np.log10(np.fabs(self.mywind.Mthetagrid[:-1,:-1]) + 0.1*np.min(np.extract(self.mywind.Mrgrid > 0.0, self.mywind.Mrgrid)))),
@@ -1677,8 +1678,9 @@ class Quasar:
         hdul.writeto(self.mywind.windfile, 
                      overwrite=True
                      )
-        datatab2 = Table(data = (self.mywind.column_density_table_grid),
-                         names = ['column_density_grid'] )
+        datatab2 = Table([self.mywind.column_density_table_grid],
+                         names = ['column_density_grid'] 
+                         )
         datatab2.write(self.mywind.windfile,
                        format = 'fits',
                        append = True)
@@ -1710,7 +1712,6 @@ class Quasar:
                             ])
       pool_tuple_input.append( ( rcell_vec, num_density[cdx], thickness[cdx], ntabs+1 ) )
 
-    t0 = tm.time() * u.s
     with Pool(self.mypars.nproc) as pool:
         descstr = "\t" * ntabs + "Updating force multipliers"
         with tqdm(total=rcell.size, ncols=0, desc=descstr) as pbar:
@@ -1724,12 +1725,17 @@ class Quasar:
               nproc_left = pool_tuple_output._number_left
             tm.sleep(1)
 
-        for cdx in range(rcell.size):
+    for cdx in range(rcell.size):
+          #mrg_cdx,mrt_cdx,temperature_cdx,ionization_parameter_cdx,column_density_table_cdx = self._wnd_force_multiplier_onecell(*pool_tuple_input[cdx])
           mrg_cdx,mrt_cdx,temperature_cdx,ionization_parameter_cdx,column_density_table_cdx = (pool_tuple_output.get())[cdx]
           mrg[cdx] = mrg_cdx
           mrt[cdx] = mrt_cdx
           temperature[cdx] = temperature_cdx
-          column_density_arrays[cdx,:] = column_density_table_cdx
+          try:
+            column_density_arrays[cdx,:] = column_density_table_cdx
+          except:
+            print(f"Unable to equate column_density_arrays[cdx,:] = {column_density_arrays[cdx,:]} ")
+            print(f" with column_density_table_cdx = {column_density_table_cdx}")
           in_shield[cdx] = ionization_parameter_cdx >= 60
 
     self.mywind.Mrgrid[     which_grid_cells] = mrg
@@ -1881,13 +1887,16 @@ class Quasar:
     cloudy_sim = cloudy(0,                 # 0 = emission, 1 = absorption
                         self.mypars,       # instance of readpars
                         self.myatoms,      # instance of atomic class
-                        frequency, totfnu, # ionizing spectrum
-                        rhoindex=0.0, logrhoscale=np.log10(thickness.to(u.cm).value), 
+                        frequency, 
+                        totfnu, # ionizing spectrum
+                        rhoindex=0.0, 
+                        logrhoscale=np.log10(thickness.to(u.cm).value), 
                         logrho0=np.log10(num_density.to(u.cm**-3).value), # density parameters
                         logZ = 0.0,
                         rstar = rcell_vec[0], zstar = rcell_vec[2],
                         verbose = False,
-                        ntabs = ntabs+1)
+                        ntabs = ntabs+1
+                        )
     temperature_cdx = cloudy_sim.temperature
     ionization_parameter_cdx = cloudy_sim.ionization_parameter
     column_density_table_cdx = cloudy_sim.column_density_array
