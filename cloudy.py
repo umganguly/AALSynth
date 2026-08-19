@@ -50,7 +50,7 @@ class cloudy:
           fu = u.erg / (u.s * u.cm * u.cm * u.Hz)
           for i in range(ionspecfreq.size):
             if self.Abs_or_Em == 0:
-              writestr = f"{(ionspecfreq[i].to(u.Hz)/RydinHz).value:.15e} {ionspecflux[i] * ionspecfreq[i] / np.max(ionspecflux * ionspecfreq):.15e} nuFnu\n"
+              writestr = f"{(ionspecfreq[i].to(u.Hz)/RydinHz).value:.15e} {np.max([sys.float_info.epsilon, ionspecflux[i] * ionspecfreq[i] / np.max(ionspecflux * ionspecfreq)]):.15e} nuFnu\n"
               f.write(writestr)
             else:
               f.write(f"{(ionspecfreq[i].to(u.Hz)/RydinHz).value:.15e} {ionspecflux[i].to(fu).value:.15e}\n")
@@ -231,11 +231,35 @@ class cloudy:
 
     column_density_array = np.zeros(self.myatoms.photo_Z.size) /  u.cm**2
     if os.path.exists(f"{self.rootname}.ovr"):
-      ovrtable = ascii.read(f"{self.rootname}.ovr", format='commented_header', header_start=0, data_start=1)
-      temperature = np.average(ovrtable['Te'])  * u.K
+      ovrtable = ascii.read(f"{self.rootname}.ovr", 
+                            format='commented_header', 
+                            header_start=0, 
+                            data_start=1
+                            )
+      try:
+        temperature = np.average(ovrtable['Te'])  * u.K
+      except:
+        print(f"cloudy._writeemfits barfed on {self.rootname}.ovr")
+        try:
+          ovrtable = ascii.read(f"{self.rootname}.ovr", 
+                                format='commented_header', 
+                                header_start=0, 
+                                data_start=1,
+                                delimiter='\t'
+                                )
+          ovrtable.pprint()
+        except:
+          print("Changing deimeter didn't help...")
+        input("paused")
       density     = np.average(ovrtable['hden'])  / u.cm**3
 
-      line_array           = ascii.read(f"{self.rootname}.lin", format='commented_header', header_start=0, data_start=1, delimiter='\t', guess=False)
+      line_array = ascii.read(f"{self.rootname}.lin", 
+                              format='commented_header', 
+                              header_start=0, 
+                              data_start=1, 
+                              delimiter='\t', 
+                              guess=False
+                              )
 
       listless = []
       input_file  = f"{self.rootname}.col"

@@ -36,7 +36,7 @@ rhi = 1.0e+5
 dtheta_fac = 0.5
 ############################################
 # Wind parameters
-wind_ntheta = 90
+wind_ntheta = 175
 ############################################
 # Observer parameters
 #zqso = 0.114272

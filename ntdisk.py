@@ -1,6 +1,7 @@
 import os
 import numpy             as np
 import matplotlib.pyplot as plt
+import time              as tm
 
 from astropy                 import constants as const
 from astropy                 import units as u
@@ -188,37 +189,62 @@ class ntdisk:
                     zobs,
                     ntabs = 0
                     ): # robs and zobs in normal units (not rg)
-        fr = np.zeros(robs.size) * u.cm / u.s**2
-        fz = np.zeros(robs.size) * u.cm / u.s**2
+        gr = np.zeros(robs.size) * u.cm / u.s**2
+        gz = np.zeros(robs.size) * u.cm / u.s**2
+        pool_tuple_input = []
         for rdx in range(self.mypars.nr):
-            mass = (self.surfdens(np.array([30.0*self.diskheight[rdx]])*self.rg,rdx))[0] * const.u.cgs * self.rstar[rdx] * self.deltar[rdx] * self.rg * self.rg * 2.0
-            frr = np.zeros(robs.size) * u.cm / u.s**2
-            fzr = np.zeros(robs.size) * u.cm / u.s**2
+            pool_tuple_input.append((robs, zobs, rdx, ntabs+1 ) )
 
-            theta = np.broadcast_to(np.linspace(0,
-                                                2.0 * np.pi,
-                                                num=np.int32(self.ntheta[rdx])),
-                                    (robs.size, np.int32(self.ntheta[rdx])))
+        with Pool(self.mypars.nproc) as pool, tqdm(total=robs.size, ncols=0, desc="\t"*ntabs + "Integrating disk to compute gravity") as pbar:
+            pool_tuple_output = pool.starmap_async(self.diskgravity_one_annulus, 
+                                                   pool_tuple_input
+                                                   )
+            nproc_left = robs.size
+            while not pool_tuple_output.ready():
+                if pool_tuple_output._number_left < nproc_left:
+                  pbar.update(nproc_left-pool_tuple_output._number_left)
+                  nproc_left = pool_tuple_output._number_left
+                tm.sleep(1)
 
-            x     = self.rstar[rdx] * self.rg * np.cos(theta)
-            y     = self.rstar[rdx] * self.rg * np.sin(theta)
+        for grr,gzr in tqdm(pool_tuple_output.get(), desc="\t"*ntabs + "Finishing up integration", ncols=0):
+            gr += grr
+            gz += gzr
 
-            dx    = x - np.transpose(np.broadcast_to(robs, (np.int32(self.ntheta[rdx]), robs.size))) * u.cm
+        return gr,gz
 
-            R     = np.sqrt(dx*dx + y*y + np.transpose(np.broadcast_to(zobs.value*zobs.value, (np.int32(self.ntheta[rdx]), robs.size))) * u.cm * u.cm)
+    ######################################################
+    def diskgravity_one_annulus(self,
+                    robs,
+                    zobs,
+                    rdx,
+                    ntabs = 0
+                    ): # robs and zobs in normal units (not rg)
 
-            frt   = const.G.cgs * mass / (R * R) # magnitude of the force from the mass element
+        mass = (self.surfdens(np.array([30.0*self.diskheight[rdx]])*self.rg,rdx))[0] * const.u.cgs * self.rstar[rdx] * self.deltar[rdx] * self.rg * self.rg * 2.0
+        grr = np.zeros(robs.size) * (u.cm / u.s**2)
+        gzr = np.zeros(robs.size) * (u.cm / u.s**2)
 
-            frtx  = frt * ((x - np.transpose(np.broadcast_to(robs.value, (np.int32(self.ntheta[rdx]), robs.size))) * u.cm) / R)
-            frtz  = frt * ((0 - np.transpose(np.broadcast_to(zobs.value, (np.int32(self.ntheta[rdx]), robs.size))) * u.cm) / R)
+        theta = np.linspace(0,
+                            2.0 * np.pi,
+                            num=np.int32(self.ntheta[rdx]) 
+                            )
 
-            frr += np.sum(frtx, axis=1)
-            fzr += np.sum(frtz, axis=1)
+        x     = self.rstar[rdx] * self.rg * np.cos(theta)
+        y     = self.rstar[rdx] * self.rg * np.sin(theta)
 
-            fr += frr
-            fz += fzr
+        dx    = x[None,:] - robs[:,None]
 
-        return np.array([fr,fz])
+        R     = np.sqrt(dx*dx + y[None,:]*y[None,:] + zobs[:,None]*zobs[:,None]) + 1.0e-100 * u.cm
+
+        grt   = const.G.cgs * mass / (R * R + 1.0e-100 * u.cm**2) # magnitude of the force from the mass element
+
+        grtx  = grt *                 dx / R
+        grtz  = grt * (0 - zobs[:,None]) / R
+
+        grr += np.sum(grtx, axis=1)
+        gzr += np.sum(grtz, axis=1)
+
+        return grr, gzr
 
     ######################################################
     # Want to have fluxrt = self.fnudiskannlus(frequency,r) which will have shape (frequency.size,self.ntheta[r],self.robs.size)
@@ -590,6 +616,7 @@ class ntdisk:
         rho = self.verticaldensity2(z, i_annul)
         return rho
 
+
     # This is for interpolating the density grid for a particular value of r and z
     def verticaldensity_onepoint(self,
                                  r,
@@ -632,8 +659,8 @@ class ntdisk:
         r2d              = np.transpose(np.broadcast_to(r,                          (self.rstar.size,r.size)))
         rstar2d          =              np.broadcast_to(self.rstar-0.5*self.drstar, (r.size,self.rstar.size))
         rstar_indices_2d =              np.broadcast_to(np.arange(self.rstar.size), (r.size,self.rstar.size))
-        i_annul_2d       = np.where( r2d  < rstar2d, rstar_indices_2d , self.rstar.size-1  )
-        i_annul = np.min(i_annul_2d  ,  axis=1)
+        i_annul_2d       = np.where( r2d  > rstar2d, rstar_indices_2d , self.rstar.size-1  )
+        i_annul = np.min(i_annul_2d,  axis=1)
         temperature = self.verticaltemperature2(z, i_annul)
         return temperature
 
