@@ -197,7 +197,8 @@ class ntdisk:
 
         with Pool(self.mypars.nproc) as pool, tqdm(total=robs.size, ncols=0, desc="\t"*ntabs + "Integrating disk to compute gravity") as pbar:
             pool_tuple_output = pool.starmap_async(self.diskgravity_one_annulus, 
-                                                   pool_tuple_input
+                                                   pool_tuple_input,
+                                                   chunksize = 1
                                                    )
             nproc_left = robs.size
             while not pool_tuple_output.ready():

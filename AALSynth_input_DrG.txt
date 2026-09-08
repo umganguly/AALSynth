@@ -37,6 +37,7 @@ dtheta_fac = 0.5
 ############################################
 # Wind parameters
 wind_ntheta = 175
+wind_mupdate = True
 ############################################
 # Observer parameters
 #zqso = 0.114272

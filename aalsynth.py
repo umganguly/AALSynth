@@ -11,14 +11,12 @@
 # atomic   -- Clean up, test imports
 # cloudy   -- Clean up, test imports
 #          -- Test for existence of Cloudy_runs/ subdirectory and creation if not there
-#          -- Effect of allowing metalicity to deviate from solar
 # corona   -- Placement of corona tuned to UV/X-ray photometric data?
 # doppler  -- Clean up, test imports
 # hstqso   -- Clean up, test imports
 #          -- Fix datapath
 # mcgv     -- Get steady-state velocity field
-#          -- Speed up force multiplier calculation --> use quasar._calculate_absorbed_flux_gaussleg
-#          -- Cloudy simulations for emissivity/source function
+#          -- Doppler shift of shield cells
 # ntdisk   -- Clean up, test imports
 #          -- Slim disk, ADAF models                          #FUTURE
 #          -- MAD models                                      #FUTURE
