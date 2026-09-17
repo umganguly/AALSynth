@@ -210,6 +210,10 @@ class mcgv:
             self.MRgrid = np.zeros(self.RR.shape)
             self.MZgrid = np.zeros(self.RR.shape)
 
+        #Mtot_mag_grid = np.sqrt(self.MRgrid*self.MRgrid + self.MZgrid*self.MZgrid)
+        self.number_density[self.boundary_mask] = 1.0e+4 / u.cm**3
+        self.mass_density = self.number_density * const.u.cgs
+
         print("\t" * ntabs + "Commiting None-sequitters")
         self.lorentz_factor = np.ones(self.RR.shape)
 
@@ -456,6 +460,8 @@ class mcgv:
                   where_velocity_bad,
                   plotstream = False
                   ):
+        mdu = u.g / u.cm**3
+        
         v_R_val  = (self.v_R[  :-1, :-1].to(u.km/u.s)).value + sys.float_info.epsilon
         v_Z_val  = (self.v_Z[  :-1, :-1].to(u.km/u.s)).value + sys.float_info.epsilon
         v_ph_val = (self.v_phi[:-1, :-1].to(u.km/u.s)).value + sys.float_info.epsilon
@@ -474,21 +480,21 @@ class mcgv:
         if (tm.time() * u.s - tplt > 30 * u.s) and plotstream:
             fig = plt.gcf()
             fig.clf()
-            for (pnum,title,colarr) in [( 1, r'$\log |v_R|$/[km s$^{-1}$]',                                  np.log10(np.fabs(v_R_val))),
-                                        ( 2, r'$\log |v_Z|$/[km s$^{-1}$]',                                  np.log10(np.fabs(v_Z_val))),
-                                        ( 3, r'$\log |v_\phi|$/ [km s$^{-1}$]',                             np.log10(np.fabs(v_ph_val))),
-                                        ( 4, r'Boundary Mask',                                              self.boundary_mask[:-1,:-1]),
-                                        ( 5, r'$\Delta v_R$ [km s$^{-1}]$',                                                     dvR_val),
-                                        ( 6, r'$\Delta v_Z$ [km s$^{-1}]$',                                                     dvZ_val),
-                                        ( 7, r'$\Delta v_\mathrm{\phi}$ [km s$^{-1}]$',                                        dvph_val),
-                                        ( 8, r'$\Delta \rho/\rho$',                                 self.drho[:-1,:-1]/rho_tmp[:-1,:-1]),
-                                       #( 8, r'$\log |\Delta \rho/\rho|$',            np.log10(np.fabs(drho[:-1,:-1]/rho_tmp[:-1,:-1]))),
-                                        ( 9, r'$g_\mathrm{R}$/[km s$^{-2}]$',                                                   g_R_val),
-                                        (10, r'$g_\mathrm{Z}$/[km s$^{-2}]$',                                                   g_Z_val),
-                                        (11, r'$\log T/[K]$',                         np.log10(self.temperature[:-1,:-1].to(u.K).value)),
-                                        (12, r'$\log n/$[cm$^{-3}$]',                   np.log10(num_dens_val + sys.float_info.epsilon)),
-                                        (13, r'$\log |M_\mathrm{R}|$', np.log10(np.fabs(self.MRgrid[:-1,:-1]) + sys.float_info.epsilon)),
-                                        (14, r'$\log |M_\mathrm{Z}|$', np.log10(np.fabs(self.MZgrid[:-1,:-1]) + sys.float_info.epsilon)),
+            for (pnum,title,colarr) in [( 1, r'$\log |v_R|$/[km s$^{-1}$]',                                   np.log10(np.fabs(v_R_val))),
+                                        ( 2, r'$\log |v_Z|$/[km s$^{-1}$]',                                   np.log10(np.fabs(v_Z_val))),
+                                        ( 3, r'$\log |v_\phi|$/ [km s$^{-1}$]',                              np.log10(np.fabs(v_ph_val))),
+                                        ( 4, r'Boundary Mask',                                               self.boundary_mask[:-1,:-1]),
+                                        ( 5, r'$\Delta v_R$ [km s$^{-1}]$',                                                      dvR_val),
+                                        ( 6, r'$\Delta v_Z$ [km s$^{-1}]$',                                                      dvZ_val),
+                                        ( 7, r'$\Delta v_\mathrm{\phi}$ [km s$^{-1}]$',                                         dvph_val),
+                                        ( 8, r'$\Delta \rho/\rho$', self.drho[:-1,:-1]/(rho_tmp[:-1,:-1] + sys.float_info.epsilon * mdu)),
+                                       #( 8, r'$\log |\Delta \rho/\rho|$',             np.log10(np.fabs(drho[:-1,:-1]/rho_tmp[:-1,:-1]))),
+                                        ( 9, r'$g_\mathrm{R}$/[km s$^{-2}]$',                                                    g_R_val),
+                                        (10, r'$g_\mathrm{Z}$/[km s$^{-2}]$',                                                    g_Z_val),
+                                        (11, r'$\log T/[K]$',                          np.log10(self.temperature[:-1,:-1].to(u.K).value)),
+                                        (12, r'$\log n/$[cm$^{-3}$]',                    np.log10(num_dens_val + sys.float_info.epsilon)),
+                                        (13, r'$\log |M_\mathrm{R}|$',  np.log10(np.fabs(self.MRgrid[:-1,:-1]) + sys.float_info.epsilon)),
+                                        (14, r'$\log |M_\mathrm{Z}|$',  np.log10(np.fabs(self.MZgrid[:-1,:-1]) + sys.float_info.epsilon)),
                                         ]:
                 self.plot_panel(pnum,
                                 title,
@@ -667,16 +673,26 @@ class mcgv:
         R_vecs = rcell_vec[:,None] - rdisk_vecs # (3,n_sightlines)
 
         # shapes:            (3,nr,nz)               (3,n_sightlines)
-        gg = self.rcell_vecs[:,:,:,None] - rdisk_vecs[:,None,None,:]                                        # (3,nr,nz,n_sightlines)
-        a = np.sum(gg * R_vecs[:,None,None,:], axis=0 ) / np.sum(R_vecs * R_vecs, axis=0)[None,None,:]      # (  nr,nz,n_sightlines)
-        D = rdisk_vecs[:,None,None,:] + a[None,:,:,:] * R_vecs[:,None,None,:] - self.rcell_vecs[:,:,:,None] # (3,nr,nz,n_sightlines)
-        Dmag = np.sqrt(np.sum( D * D, axis=0))                                                              # (  nr,nz,n_sightlines)
+       #gg = self.rcell_vecs[:,:,:,None] - rdisk_vecs[:,None,None,:]                                        # (3,nr,nz,n_sightlines)
+       #a = np.sum(gg * R_vecs[:,None,None,:], axis=0 ) / np.sum(R_vecs * R_vecs, axis=0)[None,None,:]      # (  nr,nz,n_sightlines)
+       #D = rdisk_vecs[:,None,None,:] + a[None,:,:,:] * R_vecs[:,None,None,:] - self.rcell_vecs[:,:,:,None] # (3,nr,nz,n_sightlines)
+       #Dmag = np.sqrt(np.sum( D * D, axis=0))                                                              # (  nr,nz,n_sightlines)
 
         shield_optical_depth = np.zeros((energy.size, n_sightlines))
         for sdx in range(n_sightlines):
+
+            # shapes:          (3,nr,nz)               (3,n_sightlines)
+            gg = self.rcell_vecs[:,:,:] - rdisk_vecs[:,None,None,sdx]                                           # (3,nr,nz)
+            a = np.sum(gg * R_vecs[:,None,None,sdx], axis=0 ) / np.sum(R_vecs * R_vecs, axis=0)[None,None,sdx]      # (  nr,nz)
+            D = rdisk_vecs[:,None,None,sdx] + a[None,:,:] * R_vecs[:,None,None,sdx] - self.rcell_vecs[:,:,:] # (3,nr,nz)
+            Dmag = np.sqrt(np.sum( D * D, axis=0))                                                              # (  nr,nz)
+
             #              |         "along" sightline         |
-            shield_cells = (a[:,:,sdx] > 0) & (a[:,:,sdx] < 1) & (Dmag[:,:,sdx] < self.DRR / self.mydisk.rg)
+           #shield_cells = (a[:,:,sdx] > 0) & (a[:,:,sdx] < 1) & (Dmag[:,:,sdx] < self.DRR / self.mydisk.rg)
             #                                                  | intersecting sightline                    |
+            #              |         "along" sightline |
+            shield_cells = (a[:,:] > 0) & (a[:,:] < 1) & (Dmag[:,:] < self.DRR / self.mydisk.rg)
+            #                                          | intersecting sightline                    |
 
             if np.sum(shield_cells) > 0:
                 for shield_cell_column_densities in self.column_density_table_grid[shield_cells,:]:

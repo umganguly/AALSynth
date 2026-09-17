@@ -164,7 +164,11 @@ class cloudy:
     if os.path.exists(fitsname):
       if self.Abs_or_Em == 0: # Line-emitting gas
         with fits.open(fitsname) as hdul:
-          self.ionization_parameter = float(hdul[1].header['ION_PARM'] )
+          try:
+            self.ionization_parameter = float(hdul[1].header['ION_PARM'] )
+          except:
+            print(f"Error in cloudy._readcloudy: Counld not read deal with {hdul[1].header['ION_PARM']} from {fitsname}")
+            input("Pause")
           self.temperature          = float(hdul[1].header['TEMPERAT'] ) * u.K
           self.density              = float(hdul[1].header[ 'DENSITY'] ) / u.cm**3
           self.line_array           = hdul[1].data
@@ -232,42 +236,61 @@ class cloudy:
                    ntabs = 0):
     if os.getcwd() == self.mypars.datapath:
       os.chdir("Cloudy_runs")
-    try:
-      # Now we need to read in the Cloudy outputs...
-      if os.path.exists(f"{self.rootname}.out"):
+    # Now we need to read in the Cloudy outputs...
+    ionization_parameter = -999.
+    if os.path.exists(f"{self.rootname}.out"):
+      try:
         pattern = re.compile(r"IONIZE PARMET:  U")
         with open(f"{self.rootname}.out", 'r') as f:
           for line in f:
             match = pattern.search(line)
             if match:
-              ionization_parameter = line.split()[3]
-      else:
-        ionization_parameter = -999
+              split_line = line.split()
+              try:
+                if len(split_line[2]) > 5:
+                  ionization_parameter = float(split_line[2][5:])
+                else:
+                  ionization_parameter = float(split_line[3])
+              except:
+                if len(split_line[2]) > 5:
+                  print(f"Error: cloudy._writeemfits could not resolve {split_line[2][5:]} as a float from {self.rootname}.out")
+                else:
+                  ionization_parameter = float(split_line[3])
+                  print(f"Error: cloudy._writeemfits could not resolve {split_line[3]} as a float from {self.rootname}.out")
+                print(f"{split_line}")
+      except:
+        print("\t"*ntabs + f"cloudy._writeemfits could not resolve ioniation parameter from {self.rootname}.out")
 
-      column_density_array = np.zeros(self.myatoms.photo_Z.size) /  u.cm**2
-      if os.path.exists(f"{self.rootname}.ovr"):
-        ovrtable = ascii.read(f"{self.rootname}.ovr", 
-                              format='commented_header', 
-                              header_start=0, 
-                              data_start=1
-                              )
-        try:
-          temperature = np.average(ovrtable['Te'])  * u.K
-        except:
-          print("\t"*ntabs + f"cloudy._writeemfits barfed on {self.rootname}.ovr")
-          try:
-            ovrtable = ascii.read(f"{self.rootname}.ovr", 
-                                  format='commented_header', 
-                                  header_start=0, 
-                                  data_start=1,
-                                  delimiter='\t'
-                                  )
-            ovrtable.pprint()
-          except:
-            print("\t"*ntabs + "Changing delimeter didn't help...")
-          input("paused")
+
+    temperature = 2.7 * u.K
+    density = 1.0e-10 / u.cm**3
+    if os.path.exists(f"{self.rootname}.ovr"):
+      ovrtable = ascii.read(f"{self.rootname}.ovr", 
+                            format='commented_header', 
+                            header_start=0, 
+                            data_start=1
+                            )
+      try:
+        temperature = np.average(ovrtable['Te'])  * u.K
         density     = np.average(ovrtable['hden'])  / u.cm**3
+      except:
+        print("\t"*ntabs + f"cloudy._writeemfits barfed on {self.rootname}.ovr")
+        try:
+          ovrtable = ascii.read(f"{self.rootname}.ovr", 
+                                format='commented_header', 
+                                header_start=0, 
+                                data_start=1,
+                                delimiter='\t'
+                                )
+          ovrtable.pprint()
+          temperature = np.average(ovrtable['Te'])  * u.K
+          density     = np.average(ovrtable['hden'])  / u.cm**3
+        except:
+          print("\t"*ntabs + "Changing delimeter didn't help...")
 
+    line_array = Table(names=('id', 'name', 'flux'))
+    if os.path.exists(f"{self.rootname}.lin"):
+      try:
         line_array = ascii.read(f"{self.rootname}.lin", 
                                 format='commented_header', 
                                 header_start=0, 
@@ -275,9 +298,15 @@ class cloudy:
                                 delimiter='\t', 
                                 guess=False
                                 )
+      except:
+        print("\t"*ntabs + f"cloudy._writeemfits barfed on {self.rootname}.lin")
 
-        listless = []
-        input_file  = f"{self.rootname}.col"
+
+    listless = []
+    input_file  = f"{self.rootname}.col"
+    column_density_array = np.zeros(self.myatoms.photo_Z.size) /  u.cm**2
+    if os.path.exists(f"{input_file}"):
+      try:
         with open(input_file, "r", encoding="utf-8") as infile:
             for line in infile:
               cleaned_line = line.replace("^", "")
@@ -297,12 +326,10 @@ class cloudy:
           except KeyError:
             print("\t"*ntabs + f"Failing to find {specstr} in column_density_table:")
             print("\t"*ntabs + column_density_dict)
+      except:
+        print("\t"*ntabs + f"cloudy._writeemfits barfed on {self.rootname}.col")
 
-      else:
-        temperature = 2.7 * u.K
-        density = 1.0e-10 / u.cm**3
-        line_array = Table(names=('id', 'name', 'flux'))
-
+    try:
       fitsfile = self.mypars.datapath+f"Cloudy_runs/{self.rootname}.fits"
       table_hdu = fits.BinTableHDU(data=line_array)
       table_hdu.header['ION_PARM'] = (ionization_parameter, 'Ionization Parameter (U)' )
@@ -318,11 +345,10 @@ class cloudy:
       except ValueError:
         print("Why ValueError?????")
         print(column_density_array)
-
-      self._cleanup()
-
     except:
       print("\t"*ntabs + "Could not write fits file")
+
+    self._cleanup()
 
     if os.getcwd() == self.mypars.datapath+"Cloudy_runs":
       os.chdir("../")

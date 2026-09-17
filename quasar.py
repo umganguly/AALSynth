@@ -1706,15 +1706,23 @@ class Quasar:
                                ntabs+1 
                                ))
 
-    descstr = "\t" * ntabs + f"(t_sim = {self.mywind._mcgv_time(self.mywind.tottime):e}) Updating force multipliers"
+   #descstr = "\t" * ntabs + f"(t_sim = {self.mywind._mcgv_time(self.mywind.tottime):e}) Updating force multipliers"
     with Pool(self.mypars.nproc) as pool:
       results_iterator = pool.imap(self._wnd_force_multiplier_onecell_cylindrical_wrapper, 
                                    pool_tuple_input,
                                    chunksize=1
                                    )
-      for res in tqdm(results_iterator, total=len(pool_tuple_input), ncols=0, desc=descstr):
+      pbar = tqdm(results_iterator, 
+                  total=len(pool_tuple_input), 
+                  ncols=0, 
+                  desc = "\t" * ntabs + f"(t_sim = {self.mywind._mcgv_time(self.mywind.tottime):e}) Updating force multipliers"
+                  )
+      #for res in tqdm(results_iterator, total=len(pool_tuple_input), ncols=0, desc=descstr):
+      for res in pbar:
             self.mywind.update_fm(res, 
                                   dtime=dtime)
+            rcell_vec_cdx,MR_grid_cdx,MZ_grid_cdx,temperature_cdx,ionization_parameter_cdx,column_density_table_cdx = res
+            pbar.set_description("\t" * ntabs + f"(t_sim = {self.mywind._mcgv_time(self.mywind.tottime):e}, r=[{rcell_vec_cdx[0]:.2f},{rcell_vec_cdx[2]:.2f}] rg) Updating force multipliers")
 
     self.mywind.write_fm()
 
@@ -1747,7 +1755,7 @@ class Quasar:
                                       )
                           ) * u.Hz
 
-    gaussleg_y_r,     gaussleg_w_r = np.polynomial.legendre.leggauss(self.mypars.gaussleg_nr)     # Cylindrical radius (normalized)
+    gaussleg_y_r,   gaussleg_w_r   = np.polynomial.legendre.leggauss(self.mypars.gaussleg_nr)     # Cylindrical radius (normalized)
     gaussleg_y_phi, gaussleg_w_phi = np.polynomial.legendre.leggauss(self.mypars.gaussleg_ntheta) # Azimuhtal angle (normalized)
 
     phidisk = np.pi * (gaussleg_y_phi + 1.) # Azimuthal angle
@@ -1844,27 +1852,29 @@ class Quasar:
                                     ntabs = ntabs+1
                                     )[0]
 
-      shield_optical_depth = np.zeros(fluxrtnu.shape)
-      if True:
-        shield_optical_depth += self.mywind.shield_optical_depth_v2(rdisk_vecs, # should be shape (3,nphi)   photon origin
-                                                                    rcell_vec,   # should be shape (3,)     photon destination
-                                                                    frequency.to(u.eV, equivalencies=u.spectral()),
-                                                                    ntabs = ntabs+1
-                                                                    )
+      if np.any(fluxrtnu > 0.1 * totfnu[:,None]):
 
-      fluxrtnu *= np.exp(-shield_optical_depth)
+        shield_optical_depth = np.zeros(fluxrtnu.shape)
+        if True:
+          shield_optical_depth += self.mywind.shield_optical_depth_v2(rdisk_vecs, # should be shape (3,nphi)   photon origin
+                                                                      rcell_vec,   # should be shape (3,)     photon destination
+                                                                      frequency.to(u.eV, equivalencies=u.spectral()),
+                                                                      ntabs = ntabs+1
+                                                                      )
 
-      fnurt_dnu = fluxrtnu * dfreq[:,None]
-      nufnurt = np.sum(fnurt_dnu, 
-                       axis=0
-                       ) # Integral over frequency
-      totfnu += np.sum(fluxrtnu, 
-                       axis=-1
-                       ) # Sum over azimuthal angles
+        fluxrtnu *= np.exp(-shield_optical_depth)
 
-      f_elec_scat_mag  = (const.sigma_T.cgs * nufnurt / (const.c.cgs * const.u.cgs)).to(u.cm/u.s**2)
-      f_elec_scat_vecs = f_elec_scat_mag[None,:] * R_hats
-      f_elec_scat     += np.sum(f_elec_scat_vecs, axis=-1)
+        fnurt_dnu = fluxrtnu * dfreq[:,None]
+        nufnurt = np.sum(fnurt_dnu, 
+                        axis=0
+                        ) # Integral over frequency
+        totfnu += np.sum(fluxrtnu, 
+                        axis=-1
+                        ) # Sum over azimuthal angles
+
+        f_elec_scat_mag  = (const.sigma_T.cgs * nufnurt / (const.c.cgs * const.u.cgs)).to(u.cm/u.s**2)
+        f_elec_scat_vecs = f_elec_scat_mag[None,:] * R_hats
+        f_elec_scat     += np.sum(f_elec_scat_vecs, axis=-1)
 
     f_elec_scat_mag = np.sqrt(np.sum(f_elec_scat*f_elec_scat))
 
@@ -1891,10 +1901,12 @@ class Quasar:
       cloudy_fitsname = next((s for s in file_list if sub_cloudy_fitsname in s), None)
       while cloudy_fitsname is not None:
         try:
-          subprocess.run(["rm", f"{cloudy_fitsname}"])
+          result = subprocess.run(["rm", f"{dir_path}/{cloudy_fitsname}"],
+                                  capture_output=True,
+                                  check=True)
           cloudy_fitsname = next((s for s in file_list if sub_cloudy_fitsname in s), None)
         except:
-          print("\t"*ntabs + f"Failed to remove {cloudy_fitsname}")
+          #print("\t"*ntabs + f"Failed to remove {dir_path}/{cloudy_fitsname}")
           cloudy_fitsname = None
 
       # Need to run Cloudy to get the gas temperature and line emissions
