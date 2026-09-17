@@ -193,8 +193,14 @@ class readpars:
          try: 
             print(f"Wind_ntheta = {self.wind_ntheta}")
          except AttributeError:
-            print(f"Mdot not defined in {inputfile}")
+            print(f"Wind_ntheta not defined in {inputfile}")
             self.wind_ntheta = 90
+
+         try: 
+            print(f"Force multiplier update = {self.wind_mupdate}")
+         except AttributeError:
+            print(f"wind_mupdate not defined in {inputfile}")
+            self.wind_mupdate = True
 
          ###########################################################################
          print("Observer parameters:")
