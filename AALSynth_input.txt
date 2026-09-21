@@ -56,7 +56,7 @@ dstep = 0.25
 add_clouds = True
 minfirst = True
 F_test_prob = 0.05
-############################################
+#############################################
 # Display parameters
 showgeometry = True
 interactive = True
