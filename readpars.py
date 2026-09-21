@@ -331,4 +331,4 @@ class readpars:
             print(f"Interactive? {self.interactive}")
          except AttributeError:
             print(f"Interactive not defined in {inputfile}")
-            self.showgeometry = False
+            self.interactive = False
