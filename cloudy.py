@@ -29,105 +29,118 @@ class cloudy:
 
     os.chdir(self.mypars.datapath+"Cloudy_runs")
     lognuFnu = np.interp((const.Ryd).to(u.Hz, equivalencies=u.spectral()), ionspecfreq, np.log10((ionspecfreq * ionspecflux).value))
-    if Abs_or_Em == 0: # Emission - Has not been developed yet
-      self.rootname = f"EM-hden{logrho0:.2f}-nuFnu{lognuFnu:.2f}-rstar{rstar:.2f}-zstar{zstar:.2f}"
-    else: # Absorption
-      self.rootname = f"ABS-rho0{logrho0}-index{rhoindex}-scale{logrhoscale}-logZ{logZ}-zcl{zstar}"
+    if lognuFnu > -30:
+      if Abs_or_Em == 0: # Emission - Has not been developed yet
+        self.rootname = f"EM-hden{logrho0:.2f}-nuFnu{lognuFnu:.2f}-rstar{rstar:.2f}-zstar{zstar:.2f}"
+      else: # Absorption
+        self.rootname = f"ABS-rho0{logrho0}-index{rhoindex}-scale{logrhoscale}-logZ{logZ}-zcl{zstar}"
 
-    fitsfile = self.rootname+".fits"
+      fitsfile = self.rootname+".fits"
 
-    if verbose: print("\t" * ntabs + f"Looking for cloudy in {self.mypars.cloudypath}")
-    if os.path.exists(f"{self.mypars.cloudypath}/cloudy.exe"):
-      if verbose: print("\t" * ntabs + f"                      {self.mypars.cloudypath}/cloudy.exe exists!")
-      # For the parameters given, do we need to run Cloudy or do we have files already?
+      if verbose: print("\t" * ntabs + f"Looking for cloudy in {self.mypars.cloudypath}")
+      if os.path.exists(f"{self.mypars.cloudypath}/cloudy.exe"):
+        if verbose: print("\t" * ntabs + f"                      {self.mypars.cloudypath}/cloudy.exe exists!")
+        # For the parameters given, do we need to run Cloudy or do we have files already?
 
-      if not os.path.exists(fitsfile): # if the Cloudy files don't exist, then we need to run Cloudy
-        if verbose: print("\t" * ntabs + f"Generating {self.rootname}.in file for Cloudy input")
-        # Write out the SED file:
-        with open(self.mypars.datapath+f"Cloudy_runs/{self.rootname}.sed", "w") as f:
-          f.write(f"# SED for {self.rootname}\n")
-          RydinHz = (const.Ryd).to(u.Hz, equivalencies=u.spectral())
-          fu = u.erg / (u.s * u.cm * u.cm * u.Hz)
-          for i in range(ionspecfreq.size):
-            if self.Abs_or_Em == 0:
-              writestr = f"{(ionspecfreq[i].to(u.Hz)/RydinHz).value:.15e} {np.max([sys.float_info.epsilon, ionspecflux[i] * ionspecfreq[i] / np.max(ionspecflux * ionspecfreq)]):.15e} nuFnu\n"
-              f.write(writestr)
-            else:
-              f.write(f"{(ionspecfreq[i].to(u.Hz)/RydinHz).value:.15e} {ionspecflux[i].to(fu).value:.15e}\n")
-          f.write("*****\n")
+        if not os.path.exists(fitsfile): # if the Cloudy files don't exist, then we need to run Cloudy
+          if verbose: print("\t" * ntabs + f"Generating {self.rootname}.in file for Cloudy input")
+          # Write out the SED file:
+          with open(self.mypars.datapath+f"Cloudy_runs/{self.rootname}.sed", "w") as f:
+            f.write(f"# SED for {self.rootname}\n")
+            RydinHz = (const.Ryd).to(u.Hz, equivalencies=u.spectral())
+            fu = u.erg / (u.s * u.cm * u.cm * u.Hz)
+            for i in range(ionspecfreq.size):
+              if self.Abs_or_Em == 0:
+                writestr = f"{(ionspecfreq[i].to(u.Hz)/RydinHz).value:.15e} {np.max([sys.float_info.epsilon, ionspecflux[i] * ionspecfreq[i] / np.max(ionspecflux * ionspecfreq)]):.15e} nuFnu\n"
+                f.write(writestr)
+              else:
+                f.write(f"{(ionspecfreq[i].to(u.Hz)/RydinHz).value:.15e} {ionspecflux[i].to(fu).value:.15e}\n")
+            f.write("*****\n")
 
-        # Write out the commands for Cloudy:
-        with open(self.mypars.datapath+f"Cloudy_runs/{self.rootname}.in", "w") as f:
-          f.write(f"table SED \"{self.rootname}.sed\"\n")
-          f.write(f"nuF(nu) = {lognuFnu:.2f}\n")
-          f.write(f"table HM05 redshift 0.4\n")
-          f.write("CMB redshift 0.4\n")
-          f.write("Cosmic rays background\n")
+          # Write out the commands for Cloudy:
+          with open(self.mypars.datapath+f"Cloudy_runs/{self.rootname}.in", "w") as f:
+            f.write(f"table SED \"{self.rootname}.sed\"\n")
+            f.write(f"nuF(nu) = {lognuFnu:.2f}\n")
+            f.write(f"table HM05 redshift 0.4\n")
+            f.write("CMB redshift 0.4\n")
+            f.write("Cosmic rays background\n")
 
-          f.write(f"metals {logZ} log\n")
+            f.write(f"metals {logZ} log\n")
 
-          f.write("stop temperature 3 K linear\n")
-          f.write("iterate\n")
-          f.write("print last iteration\n")
+            f.write("stop temperature 3 K linear\n")
+            f.write("iterate\n")
+            f.write("print last iteration\n")
 
-          f.write(f"set save prefix \"{self.rootname}\"\n")
-          f.write(f"save overview \".ovr\" last iteration\n")
+            f.write(f"set save prefix \"{self.rootname}\"\n")
+            f.write(f"save overview \".ovr\" last iteration\n")
 
-          if self.Abs_or_Em == 0: # Line-emitting gas
-            f.write(f"hden {logrho0}\n")
-            f.write(f"stop thickness {logrhoscale}\n")
-            f.write(f"save lines, array \".lin\" last iteration \n")
-            f.write(f"save species column densities \".col\" all last iteration\n")
-          else: # Absorbing clouds
-            f.write(f"globule density={logrho0}, depth={logrhoscale}, power={rhoindex}\n") # Density law
-            f.write(f"stop thickness {logrhoscale-0.1}\n")
+            if self.Abs_or_Em == 0: # Line-emitting gas
+              f.write(f"hden {logrho0}\n")
+              f.write(f"stop thickness {logrhoscale}\n")
+              f.write(f"save lines, array \".lin\" last iteration \n")
+              f.write(f"save species column densities \".col\" all last iteration\n")
+            else: # Absorbing clouds
+              f.write(f"globule density={logrho0}, depth={logrhoscale}, power={rhoindex}\n") # Density law
+              f.write(f"stop thickness {logrhoscale-0.1}\n")
 
-            for el in np.unique(self.myatoms.anum): # Elemental/ionic number densities
-              (elemname, elemcode) = self.myatoms.cloudyelem(el)
-              f.write(f"save element {elemname} \".{elemcode}\" density last\n")
+              for el in np.unique(self.myatoms.anum): # Elemental/ionic number densities
+                (elemname, elemcode) = self.myatoms.cloudyelem(el)
+                f.write(f"save element {elemname} \".{elemcode}\" density last\n")
 
-        if not os.path.exists(self.rootname+".out") or os.path.getsize(self.rootname+".out") < 10000:
-          # To run a C program in Python:
-          if verbose: print("\t" * ntabs + "Running Cloudy...")
-          try:
-            subprocess.run([f"{self.mypars.cloudypath}cloudy.exe", f"{self.rootname}.in"], capture_output=True, text=True, check=True)
-            self.cloudyran = True
-          except subprocess.CalledProcessError as e:
-            print("\n\n")
-            print("\t" * ntabs + f"Error with Cloudy sim for {self.rootname}?")
-            print("\t" * ntabs + f"cloudy.__init__: Execution error: {e.returncode}")
-            print("\t" * ntabs + "cloudy.__init__: STDOUT:", e.output)
-            print("\t" * ntabs + "cloudy.__init__: STDERR:", e.stderr)
-            print("\n\n")
-            self.cloudyran = False
-            
-          cloudy_output = subprocess.run(["tail", "--lines=10", f"{self.rootname}.out"], capture_output=True)
-          if verbose:
-            for clo in cloudy_output.stdout.splitlines():
-              print("\t" * ntabs + f"{clo.decode('utf-8')}")
+          if not os.path.exists(self.rootname+".out") or os.path.getsize(self.rootname+".out") < 10000:
+            # To run a C program in Python:
+            if verbose: print("\t" * ntabs + "Running Cloudy...")
+            try:
+              subprocess.run([f"{self.mypars.cloudypath}cloudy.exe", f"{self.rootname}.in"], capture_output=True, text=True, check=True)
+              self.cloudyran = True
+            except subprocess.CalledProcessError as e:
+              print("\n\n")
+              print("\t" * ntabs + f"Error with Cloudy sim for {self.rootname}?")
+              print("\t" * ntabs + f"cloudy.__init__: Execution error: {e.returncode}")
+              print("\t" * ntabs + "cloudy.__init__: STDOUT:", e.output)
+              print("\t" * ntabs + "cloudy.__init__: STDERR:", e.stderr)
+              print("\n\n")
+              self.cloudyran = False
+              
+            cloudy_output = subprocess.run(["tail", "--lines=10", f"{self.rootname}.out"], capture_output=True)
+            if verbose:
+              for clo in cloudy_output.stdout.splitlines():
+                print("\t" * ntabs + f"{clo.decode('utf-8')}")
 
+        else:
+          if verbose: print("\t" * ntabs + f"{self.rootname} files exist!")
+          self.cloudyran = True
+
+      elif verbose:
+        print("\t" * ntabs + "cloudy.__init__: Can't find Cloudy!")
+
+      ovrname = self.mypars.datapath+f"Cloudy_runs/{self.rootname}.ovr"
+      if os.path.exists(ovrname):
+        if self.Abs_or_Em == 0: # Line-emitting gas
+          self._writeemfits()
+        else:
+          self._writeabsfits()
+
+      fitsfile = self.mypars.datapath+f"Cloudy_runs/{self.rootname}.fits"
+      if os.path.exists(fitsfile):
+        if verbose:
+          print("\t" * ntabs + f"Reading in {fitsfile}")
+        self._readcloudy()
       else:
-        if verbose: print("\t" * ntabs + f"{self.rootname} files exist!")
-        self.cloudyran = True
-
-    elif verbose:
-      print("\t" * ntabs + "cloudy.__init__: Can't find Cloudy!")
-
-    ovrname = self.mypars.datapath+f"Cloudy_runs/{self.rootname}.ovr"
-    if os.path.exists(ovrname):
-      if self.Abs_or_Em == 0: # Line-emitting gas
-        self._writeemfits()
-      else:
-        self._writeabsfits()
-
-    fitsfile = self.mypars.datapath+f"Cloudy_runs/{self.rootname}.fits"
-    if os.path.exists(fitsfile):
-      if verbose:
-        print("\t" * ntabs + f"Reading in {fitsfile}")
-      self._readcloudy()
+        print("\t" * ntabs + f"Could not find the fits file {fitsfile}")
+        self.cloudyran = False
     else:
-      print("\t" * ntabs + f"Could not find the fits file {fitsfile}")
+      print("\t"*ntabs + "Cloudy has no photons!")
       self.cloudyran = False
+      self.depth       = np.array([10.0**logrhoscale]) * u.cm
+      self.temperature = np.power(10.0**lognuFnu / const.sigma_sb.cgs.value, 0.25) * u.K
+      self.density     = 10.0**logrho0 / u.cm**3
+      if self.Abs_or_Em == 0: # Line-emitting gas
+        self.ionization_parameter = lognuFnu - np.log10(const.c.cgs.value * (const.Ryd).to(u.erg, equivalencies=u.spectral()).value) - logrho0
+        self.line_array           = np.array([])
+        self.column_density_array = np.zeros(self.myatoms.photo_Z.size) /  u.cm**2
+      else: # Absorbng gas
+        self.iondens     = np.zeros((self.depth.size,self.myatoms.nion))  / u.cm**3
 
     if os.getcwd() == self.mypars.datapath+"Cloudy_runs":
       os.chdir("../")

@@ -100,9 +100,9 @@ class mcgv:
             for rzdx in range(self.R.size):
                 self.number_density[rzdx,:] = pool_tuple_output.get()[rzdx]
             mdu = u.g / u.cm**3
-            self.number_density[self.boundary_mask] = np.where(self.number_density[self.boundary_mask].to(u.cm**-3).value < 1.0e+10, #(1.66e-14 * mdu / const.u).to(u.cm**-3).value,
-                                           1.0e+10, # (1.66e-14 * mdu / const.u).to(u.cm**-3).value,
-                                           self.number_density[self.boundary_mask].to(u.cm**-3).value) * u.cm**-3
+            #self.number_density[self.boundary_mask] = np.where(self.number_density[self.boundary_mask].to(u.cm**-3).value < 1.0e+10, #(1.66e-14 * mdu / const.u).to(u.cm**-3).value,
+            #                               1.0e+10, # (1.66e-14 * mdu / const.u).to(u.cm**-3).value,
+            #                               self.number_density[self.boundary_mask].to(u.cm**-3).value) * u.cm**-3
 
             with Pool(self.mypars.nproc) as pool, tqdm(total=self.R.size, ncols=0, desc="\t"*(ntabs+1) + "Fetching temperatures") as pbar:
                 pool_tuple_output = pool.starmap_async(self.mydisk.verticaltemperature, 
@@ -121,14 +121,12 @@ class mcgv:
             if np.sum(too_cold) > 0:
                 self.temperature[too_cold] = Planck18.Tcmb(self.mypars.zqso)
 
-            self.mass_density = self.number_density * const.u.cgs
-
             self.column_density_table_grid = np.zeros((self.mypars.nr,
                                                         self.mypars.wind_ntheta,
                                                         self.myatoms.photo_Z.size
                                                         )) / u.cm**2
 
-        self.drho = np.zeros_like(self.mass_density)
+        self.drho = np.zeros_like(self.number_density) * u.g
         self.adiabatic_index = 5./3.
         self.specific_enthalpy = None
 
@@ -170,7 +168,7 @@ class mcgv:
         # so normal is at an angle = - np.arctan(self.mydisk.dzdr)
         if not self.bounded:
             v_rms      = np.sqrt(3. * const.k_B.cgs * self.temperature / const.u.cgs).decompose(bases=u.cgs.bases)
-            self.v_Z = v_rms
+            self.v_Z   = v_rms
             self.v_R   = np.zeros_like(self.v_Z)
             self.v_phi = np.sqrt(const.G * self.mypars.mbh / (self.RR)).decompose(bases=u.cgs.bases)
 
@@ -211,8 +209,11 @@ class mcgv:
             self.MZgrid = np.zeros(self.RR.shape)
 
         #Mtot_mag_grid = np.sqrt(self.MRgrid*self.MRgrid + self.MZgrid*self.MZgrid)
-        self.number_density[self.boundary_mask] = 1.0e+4 / u.cm**3
-        self.mass_density = self.number_density * const.u.cgs
+        #fm_mask = self.boundary_mask & (Mtot_mag_grid == 0)
+        #self.MRgrid[fm_mask] = self.RR[fm_mask] / np.sqrt(self.RR[fm_mask] * self.RR[fm_mask] + self.ZZ[fm_mask] * self.ZZ[fm_mask])
+        #self.MRgrid[fm_mask] = self.ZZ[fm_mask] / np.sqrt(self.RR[fm_mask] * self.RR[fm_mask] + self.ZZ[fm_mask] * self.ZZ[fm_mask])
+
+        #self.number_density[self.boundary_mask] = 1.0e+4 / u.cm**3
 
         print("\t" * ntabs + "Commiting None-sequitters")
         self.lorentz_factor = np.ones(self.RR.shape)
@@ -228,7 +229,7 @@ class mcgv:
             plt.ion()
         plt.clf()
         plt.pause(5)
-        self.plot_grid(self.mass_density,
+        self.plot_grid(self.number_density * const.u,
                        -31.0 * u.s,
                        0.0 * u.s,
                        0.0 * u.s,
@@ -249,8 +250,8 @@ class mcgv:
         match which_residual:
             case 'rho': # Continuity
                 # Mass flux in r, theta directions ---
-                massflux_R = self.mass_density * self.lorentz_factor * self.v_R # g / cm**2 / s
-                massflux_Z = self.mass_density * self.lorentz_factor * self.v_Z # g / cm**2 / s
+                massflux_R = const.u * self.number_density * self.lorentz_factor * self.v_R # g / cm**2 / s
+                massflux_Z = const.u * self.number_density * self.lorentz_factor * self.v_Z # g / cm**2 / s
 
                 dR_mdot_RdR         = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.g / u.cm**3 / u.s)
                 dR_mdot_RdR[1:-1,:] = ( ( (self.RR[2:, :]) * massflux_R[ 2:,  :] ) - ( (self.RR[:-2, :]) * massflux_R[ :-2, :  ] ) ) / (2 * self.DRR[1:-1, :] * self.RR[1:-1, :] + 1.0e-100 * u.cm**2)   # g / cm**3 / s
@@ -263,15 +264,15 @@ class mcgv:
                 drho = -dtime * cont
                 drho[self.in_disk] = 0.0 * (u.g/u.cm**3)
 
-                for arrstr,arr in [(     "mass density", self.mass_density[self.boundary_mask]     ),
-                                   (   "lorentz factor", self.lorentz_factor[self.boundary_mask]   ),
-                                   (              "v_R", self.v_R[self.boundary_mask]              ),
-                                   (              "v_Z", self.v_Z[self.boundary_mask]              ),
-                                   (       "massflux_R", massflux_R[self.boundary_mask]            ),
-                                   (       "massflux_Z", massflux_Z[self.boundary_mask]            ),
-                                   (      "dR_mdot_RdR", dR_mdot_RdR[self.boundary_mask]           ),
-                                   (         "dmdot_dZ", dmdot_dZ[self.boundary_mask]              ),
-                                   (             "cont", cont                                      )
+                for arrstr,arr in [(     "mass density", const.u * self.number_density[self.boundary_mask] ),
+                                   (   "lorentz factor", self.lorentz_factor[self.boundary_mask]           ),
+                                   (              "v_R", self.v_R[self.boundary_mask]                      ),
+                                   (              "v_Z", self.v_Z[self.boundary_mask]                      ),
+                                   (       "massflux_R", massflux_R[self.boundary_mask]                    ),
+                                   (       "massflux_Z", massflux_Z[self.boundary_mask]                    ),
+                                   (      "dR_mdot_RdR", dR_mdot_RdR[self.boundary_mask]                   ),
+                                   (         "dmdot_dZ", dmdot_dZ[self.boundary_mask]                      ),
+                                   (             "cont", cont                                              )
                                    ]:
                     if not self._sanity_check(arrstr,arr, function="mcgv._EULER_cylindrical: drho"):
                         input("Insane")
@@ -292,21 +293,21 @@ class mcgv:
                 rhs_R   = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne/u.cm**3)
 
                 lhs_R[self.boundary_mask] = \
-                    self.mass_density[self.boundary_mask] * self.specific_enthalpy[self.boundary_mask] * self.lorentz_factor[self.boundary_mask]**2 * \
+                    const.u * self.number_density[self.boundary_mask] * self.specific_enthalpy[self.boundary_mask] * self.lorentz_factor[self.boundary_mask]**2 * \
                     ( self.v_R[self.boundary_mask] * dv_R_dR[self.boundary_mask] + self.v_Z[self.boundary_mask] * dv_R_dZ[self.boundary_mask] - self.v_phi[self.boundary_mask]**2 / self.RR[self.boundary_mask] ) \
                     + dP_dR[self.boundary_mask]
 
-                for arrstr,arr in [(     "mass density", self.mass_density[self.boundary_mask]     ),
-                                   ("specific enthalpy", self.specific_enthalpy[self.boundary_mask]),
-                                   (   "lorentz factor", self.lorentz_factor[self.boundary_mask]   ),
-                                   (              "v_R", self.v_R[self.boundary_mask]              ),
-                                   (          "dv_R_dr", dv_R_dR[self.boundary_mask]               ),
-                                   (              "v_Z", self.v_Z[self.boundary_mask]              ),
-                                   (          "dv_R_dz", dv_R_dZ[self.boundary_mask]               ),
-                                   (            "v_phi", self.v_phi[self.boundary_mask]            ),
-                                   (               "RR", self.RR[self.boundary_mask]               ),
-                                   (            "dP_dR", dP_dR[self.boundary_mask]                 ),
-                                   (            "lhs_R",lhs_R                                      )
+                for arrstr,arr in [(     "mass density", const.u * self.number_density[self.boundary_mask] ),
+                                   ("specific enthalpy", self.specific_enthalpy[self.boundary_mask]        ),
+                                   (   "lorentz factor", self.lorentz_factor[self.boundary_mask]           ),
+                                   (              "v_R", self.v_R[self.boundary_mask]                      ),
+                                   (          "dv_R_dr", dv_R_dR[self.boundary_mask]                       ),
+                                   (              "v_Z", self.v_Z[self.boundary_mask]                      ),
+                                   (          "dv_R_dz", dv_R_dZ[self.boundary_mask]                       ),
+                                   (            "v_phi", self.v_phi[self.boundary_mask]                    ),
+                                   (               "RR", self.RR[self.boundary_mask]                       ),
+                                   (            "dP_dR", dP_dR[self.boundary_mask]                         ),
+                                   (            "lhs_R",lhs_R                                              )
                                    ]:
                     if not self._sanity_check(arrstr,arr, function="mcgv._EULER_cylindrical"):
                         input("Insane")
@@ -316,10 +317,10 @@ class mcgv:
                 except:
                     print(f"aRtot = {self.BH_gR[self.boundary_mask]} + {self.disk_gR[self.boundary_mask]} + {self._g_rad_R()[self.boundary_mask]}")
                     input("paused")
-                rhs_R[self.boundary_mask] = (self.mass_density[self.boundary_mask] * self.lorentz_factor[self.boundary_mask] * aRtot).decompose(bases=u.cgs.bases)
+                rhs_R[self.boundary_mask] = (const.u * self.number_density[self.boundary_mask] * self.lorentz_factor[self.boundary_mask] * aRtot).decompose(bases=u.cgs.bases)
 
                 dvR = (dtime * (rhs_R - lhs_R)
-                       / (self.mass_density * self.specific_enthalpy * self.lorentz_factor**2 + 1e-8 * (u.g/u.cm**3))
+                       / (const.u * self.number_density * self.specific_enthalpy * self.lorentz_factor**2 + 1e-8 * (u.g/u.cm**3))
                        ).decompose(bases=u.cgs.bases)
                 dvR[self.in_disk] = 0.0 * (u.cm/u.s)
 
@@ -342,15 +343,15 @@ class mcgv:
                 rhs_Z   = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne/u.cm**3)
 
                 lhs_Z[self.boundary_mask] = \
-                    self.mass_density[self.boundary_mask] * self.specific_enthalpy[self.boundary_mask] * self.lorentz_factor[self.boundary_mask]**2 * \
+                    const.u * self.number_density[self.boundary_mask] * self.specific_enthalpy[self.boundary_mask] * self.lorentz_factor[self.boundary_mask]**2 * \
                     ( self.v_R[self.boundary_mask] * dv_Z_dR[self.boundary_mask] + self.v_Z[self.boundary_mask] * dv_Z_dZ[self.boundary_mask] ) \
                     + dP_dZ[self.boundary_mask]
 
                 aZtot = (self.BH_gZ[self.boundary_mask] + self.disk_gZ[self.boundary_mask] + self._g_rad_Z()[self.boundary_mask]) 
-                rhs_Z[self.boundary_mask] = (self.mass_density[self.boundary_mask] * self.lorentz_factor[self.boundary_mask] * aZtot).decompose(bases=u.cgs.bases)
+                rhs_Z[self.boundary_mask] = (const.u * self.number_density[self.boundary_mask] * self.lorentz_factor[self.boundary_mask] * aZtot).decompose(bases=u.cgs.bases)
 
                 dvZ = (dtime * (rhs_Z - lhs_Z)
-                       / (self.mass_density * self.specific_enthalpy * self.lorentz_factor**2 + 1e-8 * (u.g/u.cm**3))
+                       / (const.u * self.number_density * self.specific_enthalpy * self.lorentz_factor**2 + 1e-8 * (u.g/u.cm**3))
                        ).decompose(bases=u.cgs.bases)
                 dvZ[self.in_disk] = 0.0 * (u.cm/u.s)
 
@@ -359,8 +360,8 @@ class mcgv:
             case 'vph': # Azimuthal equation (w/ angular momentum conservation)
                 ell = self.specific_enthalpy * self.lorentz_factor * self.RR * self.v_phi # cm**2 / s
 
-                RDvRell = self.RR * self.mass_density * self.lorentz_factor * self.v_R * ell # dyne      = g cm / s**2 = cm (g / cm**3) (cm / s) (cm**2 / s)
-                DvZell  =           self.mass_density * self.lorentz_factor * self.v_Z * ell # dyne / cm = g    / s**2 =    (g / cm**3) (cm / s) (cm**2 / s)
+                RDvRell = self.RR * const.u * self.number_density * self.lorentz_factor * self.v_R * ell # dyne      = g cm / s**2 = cm (g / cm**3) (cm / s) (cm**2 / s)
+                DvZell  =           const.u * self.number_density * self.lorentz_factor * self.v_Z * ell # dyne / cm = g    / s**2 =    (g / cm**3) (cm / s) (cm**2 / s)
 
                 dRDvRell_dR         = np.zeros_like(RDvRell)   / np.ones_like(self.DRR)      # dyne / cm
                 dRDvRell_dR[1:-1,:] = ( RDvRell[2:,:] - RDvRell[:-2,:] ) / (2 * self.DRR[1:-1, :] + 1.0e-100 * u.cm)
@@ -374,10 +375,10 @@ class mcgv:
                 lhs_phi[self.boundary_mask] = ( (dRDvRell_dR[self.boundary_mask] / self.RR[self.boundary_mask]) + \
                                                dDvZell_dZ[self.boundary_mask] 
                                                ) # dyne / cm**2 = g cm / (s**2 cm**2) = g / (s**2 cm)
-               #rhs_phi[self.boundary_mask]  = self.RR * self.mass_density * self.lorentz_factor * "self._g_rad_phi" if there were a g_rad_phi
+               #rhs_phi[self.boundary_mask]  = self.RR * const.u * self.number_density * self.lorentz_factor * "self._g_rad_phi" if there were a g_rad_phi
                #                               cm (g / cm**3) (cm / s**2) = dyne / cm**2
 
-                dell = (dtime * (rhs_phi - lhs_phi) / (self.mass_density * self.specific_enthalpy * self.lorentz_factor**2 + 1e-8 * (u.g/u.cm**3))
+                dell = (dtime * (rhs_phi - lhs_phi) / (const.u * self.number_density * self.specific_enthalpy * self.lorentz_factor**2 + 1e-8 * (u.g/u.cm**3))
                         ).decompose(bases=u.cgs.bases)
 
                 ell_hRc_ratio = ell / (self.specific_enthalpy * self.RR * const.c)
@@ -430,7 +431,7 @@ class mcgv:
     def _P_gas(self,
                ntabs = 0
                ):
-        return const.k_B.cgs * self.mass_density * self.temperature / const.u.cgs
+        return const.k_B.cgs * const.u * self.number_density * self.temperature / const.u.cgs
 
     ######################################################
     def _sanity_check(self,
@@ -474,27 +475,30 @@ class mcgv:
         g_Z_val = (self._g_rad_Z() + self.BH_gZ + self.disk_gZ)[:-1,:-1].to(u.km/u.s**2).value + sys.float_info.epsilon
 
         num_dens_val = self.number_density[:-1,:-1].to(u.cm**-3).value + sys.float_info.epsilon
+        temp_val     = self.temperature[:-1,:-1].to(u.K).value         + sys.float_info.epsilon
 
-        rgg_val = (-self.mass_density * self.lorentz_factor * const.G.cgs * self.mypars.mbh / (self.RR + sys.float_info.epsilon * u.cm)**2)[:-1,:-1].value
+        dlnrho = self.drho[:-1,:-1]/(rho_tmp[:-1,:-1] + sys.float_info.epsilon * mdu)
+
+        logMR = np.log10(np.fabs(self.MRgrid[:-1,:-1]) + sys.float_info.epsilon)
+        logMZ = np.log10(np.fabs(self.MZgrid[:-1,:-1]) + sys.float_info.epsilon)
 
         if (tm.time() * u.s - tplt > 30 * u.s) and plotstream:
             fig = plt.gcf()
             fig.clf()
-            for (pnum,title,colarr) in [( 1, r'$\log |v_R|$/[km s$^{-1}$]',                                   np.log10(np.fabs(v_R_val))),
-                                        ( 2, r'$\log |v_Z|$/[km s$^{-1}$]',                                   np.log10(np.fabs(v_Z_val))),
-                                        ( 3, r'$\log |v_\phi|$/ [km s$^{-1}$]',                              np.log10(np.fabs(v_ph_val))),
-                                        ( 4, r'Boundary Mask',                                               self.boundary_mask[:-1,:-1]),
-                                        ( 5, r'$\Delta v_R$ [km s$^{-1}]$',                                                      dvR_val),
-                                        ( 6, r'$\Delta v_Z$ [km s$^{-1}]$',                                                      dvZ_val),
-                                        ( 7, r'$\Delta v_\mathrm{\phi}$ [km s$^{-1}]$',                                         dvph_val),
-                                        ( 8, r'$\Delta \rho/\rho$', self.drho[:-1,:-1]/(rho_tmp[:-1,:-1] + sys.float_info.epsilon * mdu)),
-                                       #( 8, r'$\log |\Delta \rho/\rho|$',             np.log10(np.fabs(drho[:-1,:-1]/rho_tmp[:-1,:-1]))),
-                                        ( 9, r'$g_\mathrm{R}$/[km s$^{-2}]$',                                                    g_R_val),
-                                        (10, r'$g_\mathrm{Z}$/[km s$^{-2}]$',                                                    g_Z_val),
-                                        (11, r'$\log T/[K]$',                          np.log10(self.temperature[:-1,:-1].to(u.K).value)),
-                                        (12, r'$\log n/$[cm$^{-3}$]',                    np.log10(num_dens_val + sys.float_info.epsilon)),
-                                        (13, r'$\log |M_\mathrm{R}|$',  np.log10(np.fabs(self.MRgrid[:-1,:-1]) + sys.float_info.epsilon)),
-                                        (14, r'$\log |M_\mathrm{Z}|$',  np.log10(np.fabs(self.MZgrid[:-1,:-1]) + sys.float_info.epsilon)),
+            for (pnum,title,colarr) in [( 1, r'$\log |v_R|$/[km s$^{-1}$]',      np.log10(np.fabs(v_R_val))),
+                                        ( 2, r'$\log |v_Z|$/[km s$^{-1}$]',      np.log10(np.fabs(v_Z_val))),
+                                        ( 3, r'$\log |v_\phi|$/ [km s$^{-1}$]', np.log10(np.fabs(v_ph_val))),
+                                        ( 4, r'Boundary Mask',                  self.boundary_mask[:-1,:-1]),
+                                        ( 5, r'$\Delta v_R$ [km s$^{-1}$]',                         dvR_val),
+                                        ( 6, r'$\Delta v_Z$ [km s$^{-1}$]',                         dvZ_val),
+                                        ( 7, r'$\Delta v_\mathrm{\phi}$ [km s$^{-1}$]',            dvph_val),
+                                        ( 8, r'$\Delta \rho/\rho$',                                  dlnrho),
+                                        ( 9, r'$g_\mathrm{R}$ [km s$^{-2}$]',                       g_R_val),
+                                        (10, r'$g_\mathrm{Z}$ [km s$^{-2}$]',                       g_Z_val),
+                                        (11, r'$\log T/[K]$',                            np.log10(temp_val)),
+                                        (12, r'$\log n/$[cm$^{-3}$]',                np.log10(num_dens_val)),
+                                        (13, r'$\log |M_\mathrm{R}|$',                                logMR),
+                                        (14, r'$\log |M_\mathrm{Z}|$',                                logMZ)
                                         ]:
                 self.plot_panel(pnum,
                                 title,
@@ -632,7 +636,7 @@ class mcgv:
             self.v_R           = hdul[1].data['vR2D'] * (u.cm/u.s)
             self.v_Z           = hdul[1].data['vZ2D'] * (u.cm/u.s)
             self.v_phi         = hdul[1].data['vphi2D'] * (u.cm/u.s)
-            self.mass_density  = hdul[1].data['rho2D'] * (u.g/u.cm**3)
+            self.number_density  = hdul[1].data['rho2D'] * (u.cm**-3)
             self.temperature   = hdul[1].data['T2D'] * (u.K)
             self.BH_gR         = hdul[1].data['BH_gR'] * (u.cm/u.s**2)
             self.BH_gZ         = hdul[1].data['BH_gZ'] * (u.cm/u.s**2)
@@ -641,7 +645,6 @@ class mcgv:
             self.boundary_mask = hdul[1].data['boundary_mask']
 
 
-            self.number_density   = self.mass_density / const.u.cgs
             self.bounded = True
 
             try:
@@ -813,7 +816,7 @@ class mcgv:
 
         if self._update_iteration % self.mypars.nproc == 0:
             plt.clf()
-            self.plot_grid(self.mass_density,
+            self.plot_grid(const.u * self.number_density,
                            -31.0 * u.s,
                            0.0 * u.s,
                            0.0 * u.s,
@@ -849,7 +852,7 @@ class mcgv:
     def write_wind(self):
         datatab = Table(data=(self.RR,self.ZZ,
                               self.v_R,self.v_Z,self.v_phi,
-                              self.mass_density,self.temperature,
+                              self.number_density,self.temperature,
                               self.BH_gR,self.BH_gZ,
                               self.disk_gR,self.disk_gZ,
                               self.boundary_mask), 
