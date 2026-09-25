@@ -162,7 +162,7 @@ class readpars:
             print(f"Viscosity parameter = {self.viscosity_alpha}")
          except AttributeError:
             print(f"Viscosity alpha not defined in {inputfile}")
-            self.viscosity_ = 0.1
+            self.viscosity_alpha = 0.1
 
          try:
             print(f"Number of disk annuli = {self.nr}")

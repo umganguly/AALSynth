@@ -3,7 +3,10 @@ from astropy import constants as const
 
 ###############################################################################################
 # Returns an (nwave,nref) array with velocities
-def calcvel(waveall,waveref):
+def calcvel(waveall,
+            waveref,
+            ntabs = 0
+            ):
     nref  = waveref.size
     nwave = waveall.size
     wsq   = np.square(np.transpose(np.broadcast_to(waveall, (nref,nwave))) /

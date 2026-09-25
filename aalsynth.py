@@ -11,6 +11,7 @@
 # atomic   -- Clean up, test imports
 # cloudy   -- Clean up, test imports
 #          -- Test for existence of Cloudy_runs/ subdirectory and creation if not there
+#          -- Fix Haardt-Madau redshift based on zqso and the quasar-absorber distance
 # corona   -- Placement of corona tuned to UV/X-ray photometric data?
 # doppler  -- Clean up, test imports
 # hstqso   -- Clean up, test imports
@@ -27,7 +28,6 @@
 # readpars -- Add wind parameters?
 
 import os
-import re
 import sys
 import copy
 

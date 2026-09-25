@@ -79,33 +79,17 @@ class Quasar:
     self.robs =  (comove_dist * np.sin(self.mypars.inclination) / self.mydisk.rg).decompose()
     self.zobs = self.robs / np.tan(self.mypars.inclination)
     self.reset_observer()
-    print("\t" * ntabs + f"\tObserver located at (r,z) = ({self.robs}, {self.zobs}), inclination = {self.mypars.inclination}")
+    print("\t" * (ntabs+1) + f"Observer located at (r,z) = ({self.robs}, {self.zobs}), inclination = {self.mypars.inclination}")
 
-    print("\t" * ntabs + "\tCalculating disk")
+    print("\t" * (ntabs+1) + "Calculating disk")
     self.mydisk.makedisk(ntabs = ntabs+2)
-    print("\t" * ntabs + "\tDetermining disk photosphere")
+    print("\t" * (ntabs+1) + "Determining disk photosphere")
     self.mydisk.photosphere(ntabs = ntabs+2)
 
     ###############################################################################
     print("\t" * ntabs + "Initializing corona")
     self.mycorona = corona(self.mypars, self.mydisk)
     self.mycorona.activate_lamppost(ntabs = ntabs+1)
-
-    #rest_freq = self.ned_freq.to(u.Hz) / (1+self.mypars.zqso)
-    #pred_flux = self._calculate_absorbed_flux_gaussleg(None,
-    #                                                   wavelength = rest_freq.to(u.Angstrom, equivalencies=u.spectral() ) 
-    #                                                   )[0]
-    #print(pred_flux)
-    #plt.clf()
-    #plt.scatter(rest_freq, self.ned_flux) # * 4 * np.pi * lum_dist * lum_dist)
-    #plt.xscale('log')
-    #plt.yscale('log')
-    #plt.xlim(plt.xlim())
-    #plt.ylim(plt.ylim())
-    #plt.plot(rest_freq, 
-    #         pred_flux
-    #         )
-    #plt.show(block=True)
 
     ###############################################################################
     if mypars.calcwind:
@@ -1494,7 +1478,7 @@ class Quasar:
     if plotstream:
       plt.ion()
       plt.clf()
-      self.mywind.plot_grid(self.mywind.mass_density,
+      self.mywind.plot_grid(const.u * self.mywind.number_density,
                             -31.0 * u.s,
                             0.0 * u.s,
                             0.0 * u.s,
@@ -1526,11 +1510,11 @@ class Quasar:
 
       # Thermodynamics
       self.mywind.P_total = self.mywind._P_gas(ntabs = ntabs+1)
-      self.mywind.specific_enthalpy = 1 + self.mywind.adiabatic_index/(self.mywind.adiabatic_index-1.) * (self.mywind.P_total)/(self.mywind.mass_density*const.c**2 + 1.0e-100 * (u.erg / u.cm**3))
+      self.mywind.specific_enthalpy = 1 + self.mywind.adiabatic_index/(self.mywind.adiabatic_index-1.) * (self.mywind.P_total)/(const.u * self.mywind.number_density*const.c**2 + 1.0e-100 * (u.erg / u.cm**3))
 
       for arrstr,arr in [(  "adiabatic index", self.mywind.adiabatic_index  ),
                          (          "P_total", self.mywind.P_total          ),
-                         (     "mass density", self.mywind.mass_density     ),
+                         (     "mass density", const.u * self.mywind.number_density     ),
                          ("specific enthalpy", self.mywind.specific_enthalpy)
                          ]:
         if not self.mywind._sanity_check(arrstr,arr, function="quasar._solve_euler_cylindrical"):
@@ -1563,10 +1547,10 @@ class Quasar:
 
       # Is our step small enough to remain physical? If so, update velocity and density fields
       tupdate = tm.time() * u.s
-      rho_tmp = np.where(self.mywind.mass_density.to(mdu).value > sys.float_info.epsilon, 
-                         self.mywind.mass_density.to(mdu).value, 
+      rho_tmp = np.where((const.u * self.mywind.number_density).to(mdu).value > sys.float_info.epsilon, 
+                         (const.u * self.mywind.number_density).to(mdu).value, 
                          sys.float_info.epsilon) * mdu
-      tau_es = (self.mywind.mass_density * const.sigma_T.cgs * self.mywind.DRR / const.u.cgs).decompose()
+      tau_es = (const.u * self.mywind.number_density * const.sigma_T.cgs * self.mywind.DRR / const.u.cgs).decompose()
       vminpred = np.zeros_like(self.mywind.v_R)
       if np.sum(self.mywind.boundary_mask) > 0:
         where_density_changed = self.mywind.boundary_mask & \
@@ -1579,27 +1563,27 @@ class Quasar:
                             dvph[self.mywind.boundary_mask].to(u.km/u.s)])) < vres.to(u.km/u.s).value) and \
             np.all(rho_tmp[self.mywind.boundary_mask]+drho[self.mywind.boundary_mask] > 1.0e-5 * const.u.cgs / u.cm**3 ):
           # Sanity check - density is bounded to non-negative numbers
-          drho = np.where(self.mywind.mass_density+drho < 0, 
-                          -self.mywind.mass_density,
+          drho = np.where(const.u * self.mywind.number_density+drho < 0, 
+                          -const.u * self.mywind.number_density,
                           drho
                           )
 
-          self.mywind.mass_density[self.mywind.boundary_mask] += drho[self.mywind.boundary_mask]
-          self.mywind.v_R[         self.mywind.boundary_mask] += dvR[ self.mywind.boundary_mask]
-          self.mywind.v_Z[         self.mywind.boundary_mask] += dvZ[ self.mywind.boundary_mask]
-          self.mywind.v_phi[       self.mywind.boundary_mask] += dvph[self.mywind.boundary_mask]
-          self.mywind.tottime                                 += dtime
+          self.mywind.number_density[self.mywind.boundary_mask] += drho[self.mywind.boundary_mask] / const.u
+          self.mywind.v_R[           self.mywind.boundary_mask] += dvR[ self.mywind.boundary_mask]
+          self.mywind.v_Z[           self.mywind.boundary_mask] += dvZ[ self.mywind.boundary_mask]
+          self.mywind.v_phi[         self.mywind.boundary_mask] += dvph[self.mywind.boundary_mask]
+          self.mywind.tottime                                   += dtime
 
           self.mywind.dv_R[  self.mywind.boundary_mask] = dvR[ self.mywind.boundary_mask]
           self.mywind.dv_Z[  self.mywind.boundary_mask] = dvZ[ self.mywind.boundary_mask]
           self.mywind.dv_phi[self.mywind.boundary_mask] = dvph[self.mywind.boundary_mask]
           self.mywind.drho[  self.mywind.boundary_mask] = drho[self.mywind.boundary_mask]
 
-          self.mywind.mass_density = np.where(self.mywind.mass_density < 0 * mdu, 
-                                              0 * mdu, 
-                                              self.mywind.mass_density
-                                              )
-          self.mywind.number_density[self.mywind.boundary_mask] = self.mywind.mass_density[self.mywind.boundary_mask] / const.u.cgs
+          self.mywind.number_density = np.where(self.mywind.number_density < 0 * u.cm**-3, 
+                                                0 * u.cm**-3, 
+                                                self.mywind.number_density
+                                                )
+          self.mywind.number_density[self.mywind.boundary_mask] = const.u * self.mywind.number_density[self.mywind.boundary_mask] / const.u.cgs
 
           vmag = np.sqrt(self.mywind.v_R*self.mywind.v_R + self.mywind.v_Z*self.mywind.v_Z + self.mywind.v_phi*self.mywind.v_phi)
           dvmag = (self.mywind.v_R * dvR + self.mywind.v_Z * dvZ + self.mywind.v_phi * dvph) / vmag
@@ -1653,17 +1637,17 @@ class Quasar:
 
 
         sane = True
-        for arrstr,arr in [('g_rad_R',                            self.mywind._g_rad_R()),
-                           ('g_rad_Z',                            self.mywind._g_rad_Z()),
-                           ('P_total',                               self.mywind.P_total),
-                           ('rho',   self.mywind.mass_density[self.mywind.boundary_mask]),
-                           ('lorentz_factor',                 self.mywind.lorentz_factor),
-                           ('v_R',            self.mywind.v_R[self.mywind.boundary_mask]),
-                           ('v_Z',            self.mywind.v_Z[self.mywind.boundary_mask]),
-                           ('v_phi',        self.mywind.v_phi[self.mywind.boundary_mask]),
-                           ('dvR',                                                   dvR),
-                           ('dvZ',                                                   dvZ),
-                           ('dvph',                                                 dvph)
+        for arrstr,arr in [('g_rad_R',                                      self.mywind._g_rad_R()),
+                           ('g_rad_Z',                                      self.mywind._g_rad_Z()),
+                           ('P_total',                                         self.mywind.P_total),
+                           ('rho', const.u * self.mywind.number_density[self.mywind.boundary_mask]),
+                           ('lorentz_factor',                           self.mywind.lorentz_factor),
+                           ('v_R',                      self.mywind.v_R[self.mywind.boundary_mask]),
+                           ('v_Z',                      self.mywind.v_Z[self.mywind.boundary_mask]),
+                           ('v_phi',                  self.mywind.v_phi[self.mywind.boundary_mask]),
+                           ('dvR',                                                             dvR),
+                           ('dvZ',                                                             dvZ),
+                           ('dvph',                                                           dvph)
                            ]:
           arrsanity = self.mywind._sanity_check(arrstr,arr)
           if not arrsanity:
@@ -1755,8 +1739,11 @@ class Quasar:
                                       )
                           ) * u.Hz
 
-    gaussleg_y_r,   gaussleg_w_r   = np.polynomial.legendre.leggauss(self.mypars.gaussleg_nr)     # Cylindrical radius (normalized)
-    gaussleg_y_phi, gaussleg_w_phi = np.polynomial.legendre.leggauss(self.mypars.gaussleg_ntheta) # Azimuhtal angle (normalized)
+    gaussleg_nr     = 15 # self.mypars.gaussleg_nr
+    gaussleg_ntheta = 15 # self.mypars.gaussleg_ntheta
+
+    gaussleg_y_r,   gaussleg_w_r   = np.polynomial.legendre.leggauss(gaussleg_nr)     # Cylindrical radius (normalized)
+    gaussleg_y_phi, gaussleg_w_phi = np.polynomial.legendre.leggauss(gaussleg_ntheta) # Azimuhtal angle (normalized)
 
     phidisk = np.pi * (gaussleg_y_phi + 1.) # Azimuthal angle
 
@@ -1828,7 +1815,7 @@ class Quasar:
 
     # Add in disk annuli
     #for rdx in tqdm(range(self.mypars.gaussleg_nr), desc="\t"*(ntabs+9)+f"Disk annulus", ncols=0):
-    for rdx in range(self.mypars.gaussleg_nr):
+    for rdx in range(gaussleg_nr):
       rdisk = self.mydisk.rstar[0] * np.power(self.mydisk.rstar[-1]/self.mydisk.rstar[0], 
                                               (gaussleg_y_r[rdx] + 1)/2
                                               ) # Units rg (log)
@@ -1906,7 +1893,6 @@ class Quasar:
                                   check=True)
           cloudy_fitsname = next((s for s in file_list if sub_cloudy_fitsname in s), None)
         except:
-          #print("\t"*ntabs + f"Failed to remove {dir_path}/{cloudy_fitsname}")
           cloudy_fitsname = None
 
       # Need to run Cloudy to get the gas temperature and line emissions
@@ -1934,22 +1920,24 @@ class Quasar:
       # ^------------------------|
       done = False
       # fm is the magnitudes of the force multiplier in each direction being sampled.
-      fm = np.ones((self.mypars.gaussleg_nr,
-                    self.mypars.gaussleg_ntheta))
+      fm = np.ones((gaussleg_nr,
+                    gaussleg_ntheta))
       #########################################################
       my_args = (f_grav_bh,
                  f_grav_disk,
                  f_elec_scat,
                  vth,
                  num_density,
-                 lgxi
+                 lgxi,
+                 gaussleg_nr,
+                 gaussleg_ntheta
                  )
       res = root(fun=lambda x: self._wnd_force_multipler_root_function(x, *my_args),
                  x0 = fm.ravel()
                  )
       if res.success:
-        fm = (res.x).reshape((self.mypars.gaussleg_nr,
-                              self.mypars.gaussleg_ntheta
+        fm = (res.x).reshape((gaussleg_nr,
+                              gaussleg_ntheta
                               ))
       #########################################################
       # TURN THIS PART INTO A ROOT FINDER: F(fm) = fm - f(fm) = 0
@@ -1979,7 +1967,7 @@ class Quasar:
       #########################################################
 
       fm_vec = np.zeros((3,))
-      for rdx in range(self.mypars.gaussleg_nr):
+      for rdx in range(gaussleg_nr):
         rdisk = self.mydisk.rstar[0] * np.power(self.mydisk.rstar[-1]/self.mydisk.rstar[0], (gaussleg_y_r[rdx] + 1)/2) # Units rg (log)
 
         rdisk_vecs = np.array([rdisk * np.cos(phidisk),
@@ -2018,10 +2006,12 @@ class Quasar:
                                          f_elec_scat,
                                          vth,
                                          num_density,
-                                         lgxi
+                                         lgxi,
+                                         gaussleg_nr,
+                                         gaussleg_ntheta
                                          ):
-    xreshape = x.reshape((self.mypars.gaussleg_nr,
-                          self.mypars.gaussleg_ntheta
+    xreshape = x.reshape((gaussleg_nr,
+                          gaussleg_ntheta
                           ))
     ftot = f_grav_bh[None,None,:] + f_grav_disk[None,None,:] + f_elec_scat[None,None,:] * xreshape[:,:,None]
 
@@ -2250,8 +2240,19 @@ class Quasar:
           print("\t"*(ntabs+2) + f"              --> r = {rcl[i]:.3f}  theta = {thetacl[i]:.3f}")
           print("\t"*(ntabs+2) + f"rhoindex = {rhoindex[i]}  logrhoscale = {logrhoscale[i]} logrho0 = {logrho0[i]}")
           print("\t"*(ntabs+2) + f"log Z = {logZ[i]}  vcl_los = {vcl[i]}")
-        clouds.append(AbsCloud(self.mypars.datapath, self.mydisk, self.mycorona, self.myatoms,
-                               rcl[i], zcl[i], thetacl[i], rhoindex=rhoindex[i], logrhoscale=logrhoscale[i], logrho0=logrho0[i], logZ=logZ[i], vcl_los=vcl[i]))
+        clouds.append(AbsCloud(self.mypars, 
+                               self.mydisk, 
+                               self.mycorona, 
+                               self.myatoms,
+                               rcl[i], 
+                               zcl[i], 
+                               thetacl[i], 
+                               rhoindex=rhoindex[i], 
+                               logrhoscale=logrhoscale[i], 
+                               logrho0=logrho0[i], 
+                               logZ=logZ[i], 
+                               vcl_los=vcl[i])
+                               )
         if self.mypars.verbose:
           print("\t"*(ntabs+1) +  f"{i} Determining ionizing spectrum")
         cloudy_rootname = f"ABS-rho0{logrho0[i]}-index{rhoindex[i]}-scale{logrhoscale[i]}-logZ{logZ[i]}-zcl{zcl[i]}"
@@ -2524,7 +2525,8 @@ class Quasar:
   def reset_observer(self,
                      robs = None,
                      thetaobs = None,
-                     zobs = None
+                     zobs = None,
+                     ntabs = 0
                      ):
     if robs is None:
       self.mydisk.robs     = self.robs
