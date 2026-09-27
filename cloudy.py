@@ -7,6 +7,7 @@ import sys
 
 from astropy                 import constants as const
 from astropy                 import units     as u
+from astropy.cosmology       import LambdaCDM, z_at_value
 from astropy.io              import fits, ascii
 from astropy.table           import Table
 
@@ -15,6 +16,7 @@ class cloudy:
   def __init__(self, Abs_or_Em,                 # 0 = emission, 1 = absorption
                mypars,                                  # instance of readpars
                myatoms,                                 # instance of atomic class
+               mydisk,                                  # instance of ntdisk class
                ionspecfreq, ionspecflux,                # ionizing spectrum
                rhoindex=0.0, logrhoscale=16, logrho0=2, # density parameters
                logZ = 0.0,
@@ -29,7 +31,7 @@ class cloudy:
 
     os.chdir(self.mypars.datapath+"Cloudy_runs")
     lognuFnu = np.interp((const.Ryd).to(u.Hz, equivalencies=u.spectral()), ionspecfreq, np.log10((ionspecfreq * ionspecflux).value))
-    if lognuFnu > -30:
+    if lognuFnu > -2:
       if Abs_or_Em == 0: # Emission - Has not been developed yet
         self.rootname = f"EM-hden{logrho0:.2f}-nuFnu{lognuFnu:.2f}-rstar{rstar:.2f}-zstar{zstar:.2f}"
       else: # Absorption
@@ -61,8 +63,16 @@ class cloudy:
           with open(self.mypars.datapath+f"Cloudy_runs/{self.rootname}.in", "w") as f:
             f.write(f"table SED \"{self.rootname}.sed\"\n")
             f.write(f"nuF(nu) = {lognuFnu:.2f}\n")
-            f.write(f"table HM05 redshift 0.4\n")
-            f.write("CMB redshift 0.4\n")
+
+            # Need to use self.mypars.zqso and zcl to determine the cosmological redshift of the absorber....
+            comove_dist = LambdaCDM(H0=70, Om0=0.3, Ode0=0.7).comoving_distance(self.mypars.zqso)
+            rlos = comove_dist - np.sqrt(rstar*rstar + zstar*zstar) * mydisk.rg
+            zabs = z_at_value(LambdaCDM(H0=70, Om0=0.3, Ode0=0.7).comoving_distance, 
+                              rlos
+                              )
+            f.write(f"table HM05 redshift {zabs}\n")
+            f.write(f"CMB redshift {zabs}\n")
+            
             f.write("Cosmic rays background\n")
 
             f.write(f"metals {logZ} log\n")
@@ -129,21 +139,35 @@ class cloudy:
       else:
         print("\t" * ntabs + f"Could not find the fits file {fitsfile}")
         self.cloudyran = False
+        self._set_defaults(lognuFnu,
+                           logrhoscale,
+                           logrho0
+                           )
     else:
-      print("\t"*ntabs + "Cloudy has no photons!")
-      self.cloudyran = False
-      self.depth       = np.array([10.0**logrhoscale]) * u.cm
-      self.temperature = np.power(10.0**lognuFnu / const.sigma_sb.cgs.value, 0.25) * u.K
-      self.density     = 10.0**logrho0 / u.cm**3
-      if self.Abs_or_Em == 0: # Line-emitting gas
-        self.ionization_parameter = lognuFnu - np.log10(const.c.cgs.value * (const.Ryd).to(u.erg, equivalencies=u.spectral()).value) - logrho0
-        self.line_array           = np.array([])
-        self.column_density_array = np.zeros(self.myatoms.photo_Z.size) /  u.cm**2
-      else: # Absorbng gas
-        self.iondens     = np.zeros((self.depth.size,self.myatoms.nion))  / u.cm**3
+      self._set_defaults(lognuFnu,
+                         logrhoscale,
+                         logrho0
+                         )
 
     if os.getcwd() == self.mypars.datapath+"Cloudy_runs":
       os.chdir("../")
+
+  ######################################################
+  def _set_defaults(self,
+                    lognuFnu,
+                    logrhoscale,
+                    logrho0
+                    ):
+    self.cloudyran = False
+    self.depth       = np.array([10.0**logrhoscale]) * u.cm
+    self.temperature = np.power(10.0**lognuFnu / const.sigma_sb.cgs.value, 0.25) * u.K
+    self.density     = 10.0**logrho0 / u.cm**3
+    if self.Abs_or_Em == 0: # Line-emitting gas
+      self.ionization_parameter = lognuFnu - np.log10(const.c.cgs.value * (const.Ryd).to(u.erg, equivalencies=u.spectral()).value) - logrho0
+      self.line_array           = np.array([])
+      self.column_density_array = np.zeros(self.myatoms.photo_Z.size) /  u.cm**2
+    else: # Absorbng gas
+      self.iondens     = np.zeros((self.depth.size,self.myatoms.nion))  / u.cm**3
 
   ######################################################
   def _cleanup(self):

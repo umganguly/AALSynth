@@ -129,6 +129,11 @@ class Quasar:
         print("\t" * (ntabs+1) + f"Calculating force multipliers for {np.sum(which_cells)} cells")
         self._wnd_force_multiplier_cylindrical(which_cells,
                                                 ntabs = ntabs+2)
+        Mtot_mag_grid = np.sqrt(self.mywind.MRgrid*self.mywind.MRgrid + self.mywind.MZgrid*self.mywind.MZgrid)
+        which_cells2 = self.mywind.boundary_mask & (Mtot_mag_grid == 0)
+        print("\t" * (ntabs+1) + f"Setting force multipliers to unity in the radial driection for {np.sum(which_cells2)} cells")
+        self.mywind.MRgrid[which_cells2] = self.mywind.RR[which_cells2] / np.sqrt(self.mywind.RR[which_cells2]**2 + self.mywind.ZZ[which_cells2]**2)
+        self.mywind.MZgrid[which_cells2] = self.mywind.ZZ[which_cells2] / np.sqrt(self.mywind.RR[which_cells2]**2 + self.mywind.ZZ[which_cells2]**2)
 
       self._wnd_solve_euler_cylindrical(dtime = 10.0 * u.s,
                                         mindt = 1.0 * u.s,
@@ -1612,12 +1617,7 @@ class Quasar:
           if self.mywind.tottime > 1.0e+8 * u.year:
             done = True
         else:
-          alldv = np.array([dvR[self.mywind.boundary_mask].to(u.km/u.s),
-                            dvZ[self.mywind.boundary_mask].to(u.km/u.s),
-                            dvph[self.mywind.boundary_mask].to(u.km/u.s)
-                            ])
           dtime /= np.exp(1.0)
-
 
         # Is the timestep too small? Do we need to mask additional bins?
         if (dtime < mindt) | np.any(drho / rho_tmp < -1.0):
@@ -1899,6 +1899,7 @@ class Quasar:
       cloudy_sim = cloudy(0,                 # 0 = emission, 1 = absorption
                           self.mypars,       # instance of readpars
                           self.myatoms,      # instance of atomic class
+                          self.mydisk,
                           frequency, 
                           totfnu, # ionizing spectrum
                           rhoindex=0.0, 
@@ -1909,20 +1910,15 @@ class Quasar:
                           verbose = False,
                           ntabs = ntabs+1
                           )
-      temperature_cdx = cloudy_sim.temperature
+      temperature_cdx          = cloudy_sim.temperature
       ionization_parameter_cdx = cloudy_sim.ionization_parameter
       column_density_table_cdx = cloudy_sim.column_density_array
 
-      nit = 0
       vth = np.sqrt(2 * const.k_B * temperature_cdx / const.m_p).to(u.cm/u.s)
-      # Iteratively determine the force multiplier:
-      # fm -> lSob -> lgt -> fm -|
-      # ^------------------------|
-      done = False
       # fm is the magnitudes of the force multiplier in each direction being sampled.
       fm = np.ones((gaussleg_nr,
-                    gaussleg_ntheta))
-      #########################################################
+                    gaussleg_ntheta
+                    ))
       my_args = (f_grav_bh,
                  f_grav_disk,
                  f_elec_scat,
@@ -1939,32 +1935,6 @@ class Quasar:
         fm = (res.x).reshape((gaussleg_nr,
                               gaussleg_ntheta
                               ))
-      #########################################################
-      # TURN THIS PART INTO A ROOT FINDER: F(fm) = fm - f(fm) = 0
-      #while not done:
-      #  nit += 1
-      #  oldfm = np.copy(fm)
-
-      #  try:
-      #    ftot = f_grav_bh[None,None,:] + f_grav_disk[None,None,:] + f_elec_scat[None,None,:] * fm[:,:,None]
-      #  except:
-      #    print("\t" * ntabs + f"f_grav_bh = {f_grav_bh}")
-      #    print("\t" * ntabs + f"f_grav_disk = {f_grav_disk}")
-      #    print("\t" * ntabs + f"f_elec_scat = {f_elec_scat}")
-      #    print("\t" * ntabs + f"fm = {fm}")
-      #    input("paused for unit conversion error...")
-      #  lSob = (vth * vth / np.sqrt(np.sum(ftot*ftot, axis=-1))).decompose()
-      #  lgt  = np.log10((const.sigma_T * num_density * lSob).decompose())
-
-      #  fm = np.power(10.0, self.mywind.fmultgridfunc((lgt,lgxi)))
-
-      #  if np.all(np.fabs(fm/oldfm - 1) < tol):
-      #    done = True
-      #  else:
-      #    if nit > 1000:
-      #      print("\t" * ntabs + f"\t\t\t{rcell_vec} {np.log10((csiflux * 4 * np.pi * np.sum(rcell_vec*rcell_vec) * self.mydisk.rg**2).to(u.erg/u.s).value):.3f} {nit:3d}  {lgxi:e}  {lSob} {lgt}  {fm} {np.fabs(fm/oldfm - 1)}")
-      #      input("Pause")
-      #########################################################
 
       fm_vec = np.zeros((3,))
       for rdx in range(gaussleg_nr):

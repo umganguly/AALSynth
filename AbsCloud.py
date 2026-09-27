@@ -111,6 +111,7 @@ class AbsCloud:
     if runcloudy:
       cloud  = cloudy(self.mypars.datapath, cloudypath, 1,                 # 0 = emission, 1 = absorption
                       self.myatoms,
+                      self.mydisk, 
                       self.ionspecfreq, self.ionspecflux,            # ionizing spectrum
                       rhoindex=self.rhoindex, logrhoscale=self.logrhoscale, logrho0=self.logrho0, # density parameters
                       logZ=self.logZ,

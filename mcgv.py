@@ -462,7 +462,6 @@ class mcgv:
                   plotstream = False
                   ):
         mdu = u.g / u.cm**3
-        
         v_R_val  = (self.v_R[  :-1, :-1].to(u.km/u.s)).value + sys.float_info.epsilon
         v_Z_val  = (self.v_Z[  :-1, :-1].to(u.km/u.s)).value + sys.float_info.epsilon
         v_ph_val = (self.v_phi[:-1, :-1].to(u.km/u.s)).value + sys.float_info.epsilon
@@ -515,15 +514,16 @@ class mcgv:
         pltstr += f' Max change in velocity: {(dvmax/const.c).decompose():.2e} c \n'
 
         pltstr +=  r'$\Delta\rho/\rho$ range: '
-        pltstr += f'{np.min((self.drho[self.boundary_mask]/(rho_tmp[self.boundary_mask])).decompose()):.2e} to '
-        pltstr += f'{np.max((self.drho[self.boundary_mask]/(rho_tmp[self.boundary_mask])).decompose()):.2e} \n'
-        pltstr += f' Number of cells with '+r'$|\Delta\rho|/\rho>0.1$: '+f'{np.sum(np.fabs(self.drho[self.boundary_mask])/rho_tmp[self.boundary_mask] > 0.1)} \n'
+        pltstr += f'{np.min((dlnrho[self.boundary_mask[:-1,:-1]]).decompose()):.2e} to '
+        pltstr += f'{np.max((dlnrho[self.boundary_mask[:-1,:-1]]).decompose()):.2e} \n'
+        pltstr += f' Number of cells with '+r'$|\Delta\rho|/\rho>0.1$: '+f'{np.sum(np.fabs(dlnrho) > 0.1)} \n'
 
         pltstr += f' Number of simulated cells: {np.sum(self.boundary_mask)}' # \n'
         titeration = tm.time() * u.s
         if plotstream:
           plt.annotate(pltstr,(0.77,0.02),xycoords='figure fraction',fontsize=14,color='w',backgroundcolor='b')
           plt.pause(1)
+
 
     ######################################################
     def plot_panel(self,
