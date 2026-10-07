@@ -108,17 +108,20 @@ class Quasar:
 
         which_cells = self.mywind.boundary_mask
         print("\t"*(ntabs+1) + f"cells with boundary mask: {np.sum(which_cells)}")
-        which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)
-        print("\t"*(ntabs+1) + f"cells with boundary mask + M=0: {np.sum(which_cells)}")
-        which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6)
-        print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3]: {np.sum(which_cells)}")
-        which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6) & \
-          (self.mywind.number_density.to(u.cm**-3).value < 1.0e+15)
-        print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3] < 1.0e+15: {np.sum(which_cells)}")
-        if np.min(tau_es) < 0.7:
-          which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6) & \
-            (self.mywind.number_density.to(u.cm**-3).value < 1.0e+15) & (tau_es < 0.7)
-          print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3] < 1.0e+15 + tau_es < 0.7: {np.sum(which_cells)}")
+        if np.sum(which_cells) > 0:
+          which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)
+          print("\t"*(ntabs+1) + f"cells with boundary mask + M=0: {np.sum(which_cells)}")
+          if np.sum(which_cells) > 0:
+            which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6)
+            print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3]: {np.sum(which_cells)}")
+            if np.sum(which_cells) > 0:
+              which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6) & \
+                (self.mywind.number_density.to(u.cm**-3).value < 1.0e+15)
+              print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3] < 1.0e+15: {np.sum(which_cells)}")
+              if np.sum(which_cells) > 0 and np.min(tau_es) < 0.7:
+                which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6) & \
+                  (self.mywind.number_density.to(u.cm**-3).value < 1.0e+15) & (tau_es < 0.7)
+                print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3] < 1.0e+15 + tau_es < 0.7: {np.sum(which_cells)}")
 
       except:
         print(f"tau_es = {self.mywind.number_density} * {const.sigma_T.cgs} * {self.mywind.DRR}")
@@ -1488,9 +1491,9 @@ class Quasar:
                             0.0 * u.s,
                             0.0 * u.s,
                             0.0 * u.s,
-                            np.zeros(self.mywind.RR.shape, dtype="bool"),
-                            np.zeros(self.mywind.RR.shape, dtype="bool"),
-                            plotstream = plotstream
+                            np.ones(self.mywind.RR.shape, dtype="bool"),
+                            plotstream = plotstream,
+                            ntabs = ntabs+1
                             )
       plt.pause(1.0)
 
@@ -1499,19 +1502,15 @@ class Quasar:
     tplt       = tm.time() * u.s
 
     print("\t" * ntabs + 'Beginning hydrodynamics simulation...')
-    nit  = 0
+    euler_boundary_mask = np.copy(self.mywind.boundary_mask)
     done = False
+    time_out_nit = 0
+    n_time_out = 0
     while not done:
       # --- Velocity matters ---
       vmag = np.sqrt(self.mywind.v_R*self.mywind.v_R + self.mywind.v_Z*self.mywind.v_Z + self.mywind.v_phi*self.mywind.v_phi)
       vmag[(vmag/const.c).decompose() >= 1] = 0.99 * const.c
       self.mywind.lorentz_factor = 1. / np.sqrt(1.0 - ((vmag / const.c).decompose())**2)
-
-      # -- Radiation force, pressure and gas pressure ---
-      #try:
-      #  #self.mywind.P_total = self.mywind._P_gas(ntabs = ntabs+1) + self.mywind._P_rad_cylindrical(ntabs = ntabs+1)
-      #except:
-      #  print(f"P_total = {self.mywind._P_gas(ntabs = ntabs+1)} + {self.mywind._P_rad_cylindrical(ntabs = ntabs+1)}")
 
       # Thermodynamics
       self.mywind.P_total = self.mywind._P_gas(ntabs = ntabs+1)
@@ -1556,44 +1555,38 @@ class Quasar:
                          (const.u * self.mywind.number_density).to(mdu).value, 
                          sys.float_info.epsilon) * mdu
       tau_es = (const.u * self.mywind.number_density * const.sigma_T.cgs * self.mywind.DRR / const.u.cgs).decompose()
-      vminpred = np.zeros_like(self.mywind.v_R)
-      if np.sum(self.mywind.boundary_mask) > 0:
-        where_density_changed = self.mywind.boundary_mask & \
+      if np.sum(euler_boundary_mask) > 0:
+        where_density_changed = euler_boundary_mask & \
                                 (np.fabs(drho) / rho_tmp > 0.1) & \
                                 (tau_es < 0.7) & \
-                                (rho_tmp / const.u.cgs > 1.0e-5 / u.cm**3)
+                                (rho_tmp / const.u.cgs > sys.float_info.epsilon / u.cm**3)
 
-        if (np.max(np.fabs([dvR[ self.mywind.boundary_mask].to(u.km/u.s),
-                            dvZ[ self.mywind.boundary_mask].to(u.km/u.s),
-                            dvph[self.mywind.boundary_mask].to(u.km/u.s)])) < vres.to(u.km/u.s).value) and \
-            np.all(rho_tmp[self.mywind.boundary_mask]+drho[self.mywind.boundary_mask] > 1.0e-5 * const.u.cgs / u.cm**3 ):
-          # Sanity check - density is bounded to non-negative numbers
-          drho = np.where(const.u * self.mywind.number_density+drho < 0, 
-                          -const.u * self.mywind.number_density,
-                          drho
-                          )
+        new_velocity_vecs = np.array([(self.mywind.v_R   + dvR).to(u.cm/u.s).value,
+                                      (self.mywind.v_phi + dvph).to(u.cm/u.s).value,
+                                      (self.mywind.v_Z   + dvZ).to(u.cm/u.s).value
+                                      ]) * (u.cm/u.s)
+        new_velocity_mags = np.sqrt(np.sum(new_velocity_vecs.to(u.cm/u.s).value * new_velocity_vecs.to(u.cm/u.s).value, 
+                                           axis=0
+                                           )
+                                   ) * (u.cm/u.s)
 
-          self.mywind.number_density[self.mywind.boundary_mask] += drho[self.mywind.boundary_mask] / const.u
-          self.mywind.v_R[           self.mywind.boundary_mask] += dvR[ self.mywind.boundary_mask]
-          self.mywind.v_Z[           self.mywind.boundary_mask] += dvZ[ self.mywind.boundary_mask]
-          self.mywind.v_phi[         self.mywind.boundary_mask] += dvph[self.mywind.boundary_mask]
+        if np.all((new_velocity_mags[euler_boundary_mask]/const.c.cgs).decompose() < 1):
+
+          self.mywind.number_density[euler_boundary_mask] += drho[euler_boundary_mask] / const.u
+          self.mywind.v_R[           euler_boundary_mask] += dvR[ euler_boundary_mask]
+          self.mywind.v_Z[           euler_boundary_mask] += dvZ[ euler_boundary_mask]
+          self.mywind.v_phi[         euler_boundary_mask] += dvph[euler_boundary_mask]
           self.mywind.tottime                                   += dtime
 
-          self.mywind.dv_R[  self.mywind.boundary_mask] = dvR[ self.mywind.boundary_mask]
-          self.mywind.dv_Z[  self.mywind.boundary_mask] = dvZ[ self.mywind.boundary_mask]
-          self.mywind.dv_phi[self.mywind.boundary_mask] = dvph[self.mywind.boundary_mask]
-          self.mywind.drho[  self.mywind.boundary_mask] = drho[self.mywind.boundary_mask]
+          self.mywind.dv_R[  euler_boundary_mask] = dvR[ euler_boundary_mask]
+          self.mywind.dv_Z[  euler_boundary_mask] = dvZ[ euler_boundary_mask]
+          self.mywind.dv_phi[euler_boundary_mask] = dvph[euler_boundary_mask]
+          self.mywind.drho[  euler_boundary_mask] = drho[euler_boundary_mask]
 
           self.mywind.number_density = np.where(self.mywind.number_density < 0 * u.cm**-3, 
                                                 0 * u.cm**-3, 
                                                 self.mywind.number_density
                                                 )
-          self.mywind.number_density[self.mywind.boundary_mask] = const.u * self.mywind.number_density[self.mywind.boundary_mask] / const.u.cgs
-
-          vmag = np.sqrt(self.mywind.v_R*self.mywind.v_R + self.mywind.v_Z*self.mywind.v_Z + self.mywind.v_phi*self.mywind.v_phi)
-          dvmag = (self.mywind.v_R * dvR + self.mywind.v_Z * dvZ + self.mywind.v_phi * dvph) / vmag
-          vminpred = vmag + mindt * dvmag / dtime
-          where_velocity_bad = self.mywind.boundary_mask & (vminpred > const.c)
 
           # --- Output ---
           self.mywind.plot_grid(rho_tmp,
@@ -1601,9 +1594,10 @@ class Quasar:
                                 t0,
                                 t1,
                                 dtime,
-                                where_density_changed,
-                                where_velocity_bad,
-                                plotstream = plotstream
+                                euler_boundary_mask,
+                                plotstream = plotstream,
+                                time_out_nit = time_out_nit,
+                                ntabs = ntabs + 1
                                 )
 
           # Update the force multiplier grid
@@ -1618,23 +1612,60 @@ class Quasar:
             done = True
         else:
           dtime /= np.exp(1.0)
+          if np.any((new_velocity_mags[euler_boundary_mask]/const.c.cgs).decompose() > 1):
+            where_velocity_bad = euler_boundary_mask & ((new_velocity_mags/const.c).decompose() > 1)
+            prtstr = f"Reason for timestep decrease ({self.mywind._mcgv_time(dtime)}): "
+            prtstr += f"{np.sum(where_velocity_bad)} bounded superluminal cells "
+            print("\t"*ntabs + prtstr)
+            print("\t"*ntabs + "-"*50)
+            print("\t"*ntabs + "Bad cells")
+            print("\t"*ntabs + "-"*50)
+            print("\t"*ntabs + f"RR = {self.mywind.RR[where_velocity_bad]/self.mydisk.rg}")
+            print("\t"*ntabs + f"ZZ = {self.mywind.ZZ[where_velocity_bad]/self.mydisk.rg}")
+            print("\t"*ntabs + "-"*50)
 
         # Is the timestep too small? Do we need to mask additional bins?
-        if (dtime < mindt) | np.any(drho / rho_tmp < -1.0):
-          self.mywind.boundary_mask = (self.mywind.ZZ / self.mydisk.rg > self.mydisk.zt1[:,None]) & \
-                                      (self.mywind.RR / self.mydisk.rg > self.mydisk.rstar[0]) & \
-                                      ( drho / rho_tmp > -1.0 ) & \
-                                      (vminpred < const.c)
-          nit = 0
+        if (dtime < mindt):
+          prtstr = f"Time step has fallen into shadow: dtime = {dtime} < mindt = {mindt} ({time_out_nit})"
+
+          euler_boundary_mask = self.mywind.boundary_mask & ((new_velocity_mags/const.c).decompose() <  1)
+          bad_mask            = self.mywind.boundary_mask & ((new_velocity_mags/const.c).decompose() >= 1)
+
+          n_time_out = np.sum(bad_mask)
+          prtstr += f" -- {n_time_out} cells are getting a time out"
+
+          time_out_nit = 10
+          print("\t"*ntabs + f"{prtstr}")
+
+          if np.sum(bad_mask) > 0:
+            print("\t"*ntabs + "-"*50)
+            print("\t"*ntabs + "Bad cells")
+            print("\t"*ntabs + "-"*50)
+            print("\t"*ntabs + f"RR = {self.mywind.RR[bad_mask]/self.mydisk.rg}")
+            print("\t"*ntabs + f"ZZ = {self.mywind.ZZ[bad_mask]/self.mydisk.rg}")
+            print("\t"*ntabs + "-"*50)
+           #input("paused")
+
+          self.mywind.plot_grid(rho_tmp,
+                                tplt,
+                                t0,
+                                t1,
+                                dtime,
+                                euler_boundary_mask,
+                                plotstream = plotstream,
+                                time_out_nit = time_out_nit,
+                                ntabs = ntabs + 1
+                                )
+
         else:
-          nit += 1
-          if nit >= 5:
-            self.mywind.boundary_mask = (self.mywind.ZZ / self.mydisk.rg > self.mydisk.zt1[:,None]) & \
-                                        (self.mywind.RR / self.mydisk.rg > self.mydisk.rstar[0])
-            nit = 0
+          if time_out_nit > 0:
+            time_out_nit -= 1
+          if (time_out_nit == 0) and (n_time_out > 0):
+            print("\t"*ntabs + f"{n_time_out} cells have served their time -- reinstating")
+            euler_boundary_mask = np.copy(self.mywind.boundary_mask)
+            n_time_out = 0
 
         tupdate = tm.time() * u.s - tupdate
-
 
         sane = True
         for arrstr,arr in [('g_rad_R',                                      self.mywind._g_rad_R()),
@@ -1704,7 +1735,9 @@ class Quasar:
       #for res in tqdm(results_iterator, total=len(pool_tuple_input), ncols=0, desc=descstr):
       for res in pbar:
             self.mywind.update_fm(res, 
-                                  dtime=dtime)
+                                  dtime=dtime,
+                                  ntabs = ntabs+1
+                                  )
             rcell_vec_cdx,MR_grid_cdx,MZ_grid_cdx,temperature_cdx,ionization_parameter_cdx,column_density_table_cdx = res
             pbar.set_description("\t" * ntabs + f"(t_sim = {self.mywind._mcgv_time(self.mywind.tottime):e}, r=[{rcell_vec_cdx[0]:.2f},{rcell_vec_cdx[2]:.2f}] rg) Updating force multipliers")
 

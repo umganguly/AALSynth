@@ -91,7 +91,7 @@ class cloudy:
               f.write(f"save species column densities \".col\" all last iteration\n")
             else: # Absorbing clouds
               f.write(f"globule density={logrho0}, depth={logrhoscale}, power={rhoindex}\n") # Density law
-              f.write(f"stop thickness {logrhoscale-0.1}\n")
+              f.write(f"stop thickness {logrhoscale-self.mypars.softenning}\n")
 
               for el in np.unique(self.myatoms.anum): # Elemental/ionic number densities
                 (elemname, elemcode) = self.myatoms.cloudyelem(el)
