@@ -1624,7 +1624,6 @@ class Quasar:
             print("\t"*ntabs + f"ZZ = {self.mywind.ZZ[where_velocity_bad]/self.mydisk.rg}")
             print("\t"*ntabs + "-"*50)
 
-
         # Is the timestep too small? Do we need to mask additional bins?
         if (dtime < mindt):
           prtstr = f"Time step has fallen into shadow: dtime = {dtime} < mindt = {mindt} ({time_out_nit})"
