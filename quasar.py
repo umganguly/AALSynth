@@ -79,33 +79,17 @@ class Quasar:
     self.robs =  (comove_dist * np.sin(self.mypars.inclination) / self.mydisk.rg).decompose()
     self.zobs = self.robs / np.tan(self.mypars.inclination)
     self.reset_observer()
-    print("\t" * ntabs + f"\tObserver located at (r,z) = ({self.robs}, {self.zobs}), inclination = {self.mypars.inclination}")
+    print("\t" * (ntabs+1) + f"Observer located at (r,z) = ({self.robs}, {self.zobs}), inclination = {self.mypars.inclination}")
 
-    print("\t" * ntabs + "\tCalculating disk")
+    print("\t" * (ntabs+1) + "Calculating disk")
     self.mydisk.makedisk(ntabs = ntabs+2)
-    print("\t" * ntabs + "\tDetermining disk photosphere")
+    print("\t" * (ntabs+1) + "Determining disk photosphere")
     self.mydisk.photosphere(ntabs = ntabs+2)
 
     ###############################################################################
     print("\t" * ntabs + "Initializing corona")
     self.mycorona = corona(self.mypars, self.mydisk)
     self.mycorona.activate_lamppost(ntabs = ntabs+1)
-
-    #rest_freq = self.ned_freq.to(u.Hz) / (1+self.mypars.zqso)
-    #pred_flux = self._calculate_absorbed_flux_gaussleg(None,
-    #                                                   wavelength = rest_freq.to(u.Angstrom, equivalencies=u.spectral() ) 
-    #                                                   )[0]
-    #print(pred_flux)
-    #plt.clf()
-    #plt.scatter(rest_freq, self.ned_flux) # * 4 * np.pi * lum_dist * lum_dist)
-    #plt.xscale('log')
-    #plt.yscale('log')
-    #plt.xlim(plt.xlim())
-    #plt.ylim(plt.ylim())
-    #plt.plot(rest_freq, 
-    #         pred_flux
-    #         )
-    #plt.show(block=True)
 
     ###############################################################################
     if mypars.calcwind:
@@ -124,17 +108,20 @@ class Quasar:
 
         which_cells = self.mywind.boundary_mask
         print("\t"*(ntabs+1) + f"cells with boundary mask: {np.sum(which_cells)}")
-        which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)
-        print("\t"*(ntabs+1) + f"cells with boundary mask + M=0: {np.sum(which_cells)}")
-        which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6)
-        print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3]: {np.sum(which_cells)}")
-        which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6) & \
-          (self.mywind.number_density.to(u.cm**-3).value < 1.0e+15)
-        print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3] < 1.0e+15: {np.sum(which_cells)}")
-        if np.min(tau_es) < 0.7:
-          which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6) & \
-            (self.mywind.number_density.to(u.cm**-3).value < 1.0e+15) & (tau_es < 0.7)
-          print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3] < 1.0e+15 + tau_es < 0.7: {np.sum(which_cells)}")
+        if np.sum(which_cells) > 0:
+          which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)
+          print("\t"*(ntabs+1) + f"cells with boundary mask + M=0: {np.sum(which_cells)}")
+          if np.sum(which_cells) > 0:
+            which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6)
+            print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3]: {np.sum(which_cells)}")
+            if np.sum(which_cells) > 0:
+              which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6) & \
+                (self.mywind.number_density.to(u.cm**-3).value < 1.0e+15)
+              print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3] < 1.0e+15: {np.sum(which_cells)}")
+              if np.sum(which_cells) > 0 and np.min(tau_es) < 0.7:
+                which_cells = self.mywind.boundary_mask & (Mtot_mag_grid == 0)  & (self.mywind.number_density.to(u.cm**-3).value >= 9.0e-6) & \
+                  (self.mywind.number_density.to(u.cm**-3).value < 1.0e+15) & (tau_es < 0.7)
+                print("\t"*(ntabs+1) + f"cells with boundary mask + M=0 + 9.0e-6 < n[cm-3] < 1.0e+15 + tau_es < 0.7: {np.sum(which_cells)}")
 
       except:
         print(f"tau_es = {self.mywind.number_density} * {const.sigma_T.cgs} * {self.mywind.DRR}")
@@ -145,6 +132,11 @@ class Quasar:
         print("\t" * (ntabs+1) + f"Calculating force multipliers for {np.sum(which_cells)} cells")
         self._wnd_force_multiplier_cylindrical(which_cells,
                                                 ntabs = ntabs+2)
+        Mtot_mag_grid = np.sqrt(self.mywind.MRgrid*self.mywind.MRgrid + self.mywind.MZgrid*self.mywind.MZgrid)
+        which_cells2 = self.mywind.boundary_mask & (Mtot_mag_grid == 0)
+        print("\t" * (ntabs+1) + f"Setting force multipliers to unity in the radial driection for {np.sum(which_cells2)} cells")
+        self.mywind.MRgrid[which_cells2] = self.mywind.RR[which_cells2] / np.sqrt(self.mywind.RR[which_cells2]**2 + self.mywind.ZZ[which_cells2]**2)
+        self.mywind.MZgrid[which_cells2] = self.mywind.ZZ[which_cells2] / np.sqrt(self.mywind.RR[which_cells2]**2 + self.mywind.ZZ[which_cells2]**2)
 
       self._wnd_solve_euler_cylindrical(dtime = 10.0 * u.s,
                                         mindt = 1.0 * u.s,
@@ -1494,14 +1486,14 @@ class Quasar:
     if plotstream:
       plt.ion()
       plt.clf()
-      self.mywind.plot_grid(self.mywind.mass_density,
+      self.mywind.plot_grid(const.u * self.mywind.number_density,
                             -31.0 * u.s,
                             0.0 * u.s,
                             0.0 * u.s,
                             0.0 * u.s,
-                            np.zeros(self.mywind.RR.shape, dtype="bool"),
-                            np.zeros(self.mywind.RR.shape, dtype="bool"),
-                            plotstream = plotstream
+                            np.ones(self.mywind.RR.shape, dtype="bool"),
+                            plotstream = plotstream,
+                            ntabs = ntabs+1
                             )
       plt.pause(1.0)
 
@@ -1510,27 +1502,23 @@ class Quasar:
     tplt       = tm.time() * u.s
 
     print("\t" * ntabs + 'Beginning hydrodynamics simulation...')
-    nit  = 0
+    euler_boundary_mask = np.copy(self.mywind.boundary_mask)
     done = False
+    time_out_nit = 0
+    n_time_out = 0
     while not done:
       # --- Velocity matters ---
       vmag = np.sqrt(self.mywind.v_R*self.mywind.v_R + self.mywind.v_Z*self.mywind.v_Z + self.mywind.v_phi*self.mywind.v_phi)
       vmag[(vmag/const.c).decompose() >= 1] = 0.99 * const.c
       self.mywind.lorentz_factor = 1. / np.sqrt(1.0 - ((vmag / const.c).decompose())**2)
 
-      # -- Radiation force, pressure and gas pressure ---
-      #try:
-      #  #self.mywind.P_total = self.mywind._P_gas(ntabs = ntabs+1) + self.mywind._P_rad_cylindrical(ntabs = ntabs+1)
-      #except:
-      #  print(f"P_total = {self.mywind._P_gas(ntabs = ntabs+1)} + {self.mywind._P_rad_cylindrical(ntabs = ntabs+1)}")
-
       # Thermodynamics
       self.mywind.P_total = self.mywind._P_gas(ntabs = ntabs+1)
-      self.mywind.specific_enthalpy = 1 + self.mywind.adiabatic_index/(self.mywind.adiabatic_index-1.) * (self.mywind.P_total)/(self.mywind.mass_density*const.c**2 + 1.0e-100 * (u.erg / u.cm**3))
+      self.mywind.specific_enthalpy = 1 + self.mywind.adiabatic_index/(self.mywind.adiabatic_index-1.) * (self.mywind.P_total)/(const.u * self.mywind.number_density*const.c**2 + 1.0e-100 * (u.erg / u.cm**3))
 
       for arrstr,arr in [(  "adiabatic index", self.mywind.adiabatic_index  ),
                          (          "P_total", self.mywind.P_total          ),
-                         (     "mass density", self.mywind.mass_density     ),
+                         (     "mass density", const.u * self.mywind.number_density     ),
                          ("specific enthalpy", self.mywind.specific_enthalpy)
                          ]:
         if not self.mywind._sanity_check(arrstr,arr, function="quasar._solve_euler_cylindrical"):
@@ -1563,48 +1551,42 @@ class Quasar:
 
       # Is our step small enough to remain physical? If so, update velocity and density fields
       tupdate = tm.time() * u.s
-      rho_tmp = np.where(self.mywind.mass_density.to(mdu).value > sys.float_info.epsilon, 
-                         self.mywind.mass_density.to(mdu).value, 
+      rho_tmp = np.where((const.u * self.mywind.number_density).to(mdu).value > sys.float_info.epsilon, 
+                         (const.u * self.mywind.number_density).to(mdu).value, 
                          sys.float_info.epsilon) * mdu
-      tau_es = (self.mywind.mass_density * const.sigma_T.cgs * self.mywind.DRR / const.u.cgs).decompose()
-      vminpred = np.zeros_like(self.mywind.v_R)
-      if np.sum(self.mywind.boundary_mask) > 0:
-        where_density_changed = self.mywind.boundary_mask & \
+      tau_es = (const.u * self.mywind.number_density * const.sigma_T.cgs * self.mywind.DRR / const.u.cgs).decompose()
+      if np.sum(euler_boundary_mask) > 0:
+        where_density_changed = euler_boundary_mask & \
                                 (np.fabs(drho) / rho_tmp > 0.1) & \
                                 (tau_es < 0.7) & \
-                                (rho_tmp / const.u.cgs > 1.0e-5 / u.cm**3)
+                                (rho_tmp / const.u.cgs > sys.float_info.epsilon / u.cm**3)
 
-        if (np.max(np.fabs([dvR[ self.mywind.boundary_mask].to(u.km/u.s),
-                            dvZ[ self.mywind.boundary_mask].to(u.km/u.s),
-                            dvph[self.mywind.boundary_mask].to(u.km/u.s)])) < vres.to(u.km/u.s).value) and \
-            np.all(rho_tmp[self.mywind.boundary_mask]+drho[self.mywind.boundary_mask] > 1.0e-5 * const.u.cgs / u.cm**3 ):
-          # Sanity check - density is bounded to non-negative numbers
-          drho = np.where(self.mywind.mass_density+drho < 0, 
-                          -self.mywind.mass_density,
-                          drho
-                          )
+        new_velocity_vecs = np.array([(self.mywind.v_R   + dvR).to(u.cm/u.s).value,
+                                      (self.mywind.v_phi + dvph).to(u.cm/u.s).value,
+                                      (self.mywind.v_Z   + dvZ).to(u.cm/u.s).value
+                                      ]) * (u.cm/u.s)
+        new_velocity_mags = np.sqrt(np.sum(new_velocity_vecs.to(u.cm/u.s).value * new_velocity_vecs.to(u.cm/u.s).value, 
+                                           axis=0
+                                           )
+                                   ) * (u.cm/u.s)
 
-          self.mywind.mass_density[self.mywind.boundary_mask] += drho[self.mywind.boundary_mask]
-          self.mywind.v_R[         self.mywind.boundary_mask] += dvR[ self.mywind.boundary_mask]
-          self.mywind.v_Z[         self.mywind.boundary_mask] += dvZ[ self.mywind.boundary_mask]
-          self.mywind.v_phi[       self.mywind.boundary_mask] += dvph[self.mywind.boundary_mask]
-          self.mywind.tottime                                 += dtime
+        if np.all((new_velocity_mags[euler_boundary_mask]/const.c.cgs).decompose() < 1):
 
-          self.mywind.dv_R[  self.mywind.boundary_mask] = dvR[ self.mywind.boundary_mask]
-          self.mywind.dv_Z[  self.mywind.boundary_mask] = dvZ[ self.mywind.boundary_mask]
-          self.mywind.dv_phi[self.mywind.boundary_mask] = dvph[self.mywind.boundary_mask]
-          self.mywind.drho[  self.mywind.boundary_mask] = drho[self.mywind.boundary_mask]
+          self.mywind.number_density[euler_boundary_mask] += drho[euler_boundary_mask] / const.u
+          self.mywind.v_R[           euler_boundary_mask] += dvR[ euler_boundary_mask]
+          self.mywind.v_Z[           euler_boundary_mask] += dvZ[ euler_boundary_mask]
+          self.mywind.v_phi[         euler_boundary_mask] += dvph[euler_boundary_mask]
+          self.mywind.tottime                                   += dtime
 
-          self.mywind.mass_density = np.where(self.mywind.mass_density < 0 * mdu, 
-                                              0 * mdu, 
-                                              self.mywind.mass_density
-                                              )
-          self.mywind.number_density[self.mywind.boundary_mask] = self.mywind.mass_density[self.mywind.boundary_mask] / const.u.cgs
+          self.mywind.dv_R[  euler_boundary_mask] = dvR[ euler_boundary_mask]
+          self.mywind.dv_Z[  euler_boundary_mask] = dvZ[ euler_boundary_mask]
+          self.mywind.dv_phi[euler_boundary_mask] = dvph[euler_boundary_mask]
+          self.mywind.drho[  euler_boundary_mask] = drho[euler_boundary_mask]
 
-          vmag = np.sqrt(self.mywind.v_R*self.mywind.v_R + self.mywind.v_Z*self.mywind.v_Z + self.mywind.v_phi*self.mywind.v_phi)
-          dvmag = (self.mywind.v_R * dvR + self.mywind.v_Z * dvZ + self.mywind.v_phi * dvph) / vmag
-          vminpred = vmag + mindt * dvmag / dtime
-          where_velocity_bad = self.mywind.boundary_mask & (vminpred > const.c)
+          self.mywind.number_density = np.where(self.mywind.number_density < 0 * u.cm**-3, 
+                                                0 * u.cm**-3, 
+                                                self.mywind.number_density
+                                                )
 
           # --- Output ---
           self.mywind.plot_grid(rho_tmp,
@@ -1612,9 +1594,10 @@ class Quasar:
                                 t0,
                                 t1,
                                 dtime,
-                                where_density_changed,
-                                where_velocity_bad,
-                                plotstream = plotstream
+                                euler_boundary_mask,
+                                plotstream = plotstream,
+                                time_out_nit = time_out_nit,
+                                ntabs = ntabs + 1
                                 )
 
           # Update the force multiplier grid
@@ -1628,42 +1611,74 @@ class Quasar:
           if self.mywind.tottime > 1.0e+8 * u.year:
             done = True
         else:
-          alldv = np.array([dvR[self.mywind.boundary_mask].to(u.km/u.s),
-                            dvZ[self.mywind.boundary_mask].to(u.km/u.s),
-                            dvph[self.mywind.boundary_mask].to(u.km/u.s)
-                            ])
           dtime /= np.exp(1.0)
-
+          if np.any((new_velocity_mags[euler_boundary_mask]/const.c.cgs).decompose() > 1):
+            where_velocity_bad = euler_boundary_mask & ((new_velocity_mags/const.c).decompose() > 1)
+            prtstr = f"Reason for timestep decrease ({self.mywind._mcgv_time(dtime)}): "
+            prtstr += f"{np.sum(where_velocity_bad)} bounded superluminal cells "
+            print("\t"*ntabs + prtstr)
+            print("\t"*ntabs + "-"*50)
+            print("\t"*ntabs + "Bad cells")
+            print("\t"*ntabs + "-"*50)
+            print("\t"*ntabs + f"RR = {self.mywind.RR[where_velocity_bad]/self.mydisk.rg}")
+            print("\t"*ntabs + f"ZZ = {self.mywind.ZZ[where_velocity_bad]/self.mydisk.rg}")
+            print("\t"*ntabs + "-"*50)
 
         # Is the timestep too small? Do we need to mask additional bins?
-        if (dtime < mindt) | np.any(drho / rho_tmp < -1.0):
-          self.mywind.boundary_mask = (self.mywind.ZZ / self.mydisk.rg > self.mydisk.zt1[:,None]) & \
-                                      (self.mywind.RR / self.mydisk.rg > self.mydisk.rstar[0]) & \
-                                      ( drho / rho_tmp > -1.0 ) & \
-                                      (vminpred < const.c)
-          nit = 0
+        if (dtime < mindt):
+          prtstr = f"Time step has fallen into shadow: dtime = {dtime} < mindt = {mindt} ({time_out_nit})"
+
+          euler_boundary_mask = self.mywind.boundary_mask & ((new_velocity_mags/const.c).decompose() <  1)
+          bad_mask            = self.mywind.boundary_mask & ((new_velocity_mags/const.c).decompose() >= 1)
+
+          n_time_out = np.sum(bad_mask)
+          prtstr += f" -- {n_time_out} cells are getting a time out"
+
+          time_out_nit = 10
+          print("\t"*ntabs + f"{prtstr}")
+
+          if np.sum(bad_mask) > 0:
+            print("\t"*ntabs + "-"*50)
+            print("\t"*ntabs + "Bad cells")
+            print("\t"*ntabs + "-"*50)
+            print("\t"*ntabs + f"RR = {self.mywind.RR[bad_mask]/self.mydisk.rg}")
+            print("\t"*ntabs + f"ZZ = {self.mywind.ZZ[bad_mask]/self.mydisk.rg}")
+            print("\t"*ntabs + "-"*50)
+           #input("paused")
+
+          self.mywind.plot_grid(rho_tmp,
+                                tplt,
+                                t0,
+                                t1,
+                                dtime,
+                                euler_boundary_mask,
+                                plotstream = plotstream,
+                                time_out_nit = time_out_nit,
+                                ntabs = ntabs + 1
+                                )
+
         else:
-          nit += 1
-          if nit >= 5:
-            self.mywind.boundary_mask = (self.mywind.ZZ / self.mydisk.rg > self.mydisk.zt1[:,None]) & \
-                                        (self.mywind.RR / self.mydisk.rg > self.mydisk.rstar[0])
-            nit = 0
+          if time_out_nit > 0:
+            time_out_nit -= 1
+          if (time_out_nit == 0) and (n_time_out > 0):
+            print("\t"*ntabs + f"{n_time_out} cells have served their time -- reinstating")
+            euler_boundary_mask = np.copy(self.mywind.boundary_mask)
+            n_time_out = 0
 
         tupdate = tm.time() * u.s - tupdate
 
-
         sane = True
-        for arrstr,arr in [('g_rad_R',                            self.mywind._g_rad_R()),
-                           ('g_rad_Z',                            self.mywind._g_rad_Z()),
-                           ('P_total',                               self.mywind.P_total),
-                           ('rho',   self.mywind.mass_density[self.mywind.boundary_mask]),
-                           ('lorentz_factor',                 self.mywind.lorentz_factor),
-                           ('v_R',            self.mywind.v_R[self.mywind.boundary_mask]),
-                           ('v_Z',            self.mywind.v_Z[self.mywind.boundary_mask]),
-                           ('v_phi',        self.mywind.v_phi[self.mywind.boundary_mask]),
-                           ('dvR',                                                   dvR),
-                           ('dvZ',                                                   dvZ),
-                           ('dvph',                                                 dvph)
+        for arrstr,arr in [('g_rad_R',                                      self.mywind._g_rad_R()),
+                           ('g_rad_Z',                                      self.mywind._g_rad_Z()),
+                           ('P_total',                                         self.mywind.P_total),
+                           ('rho', const.u * self.mywind.number_density[self.mywind.boundary_mask]),
+                           ('lorentz_factor',                           self.mywind.lorentz_factor),
+                           ('v_R',                      self.mywind.v_R[self.mywind.boundary_mask]),
+                           ('v_Z',                      self.mywind.v_Z[self.mywind.boundary_mask]),
+                           ('v_phi',                  self.mywind.v_phi[self.mywind.boundary_mask]),
+                           ('dvR',                                                             dvR),
+                           ('dvZ',                                                             dvZ),
+                           ('dvph',                                                           dvph)
                            ]:
           arrsanity = self.mywind._sanity_check(arrstr,arr)
           if not arrsanity:
@@ -1720,7 +1735,9 @@ class Quasar:
       #for res in tqdm(results_iterator, total=len(pool_tuple_input), ncols=0, desc=descstr):
       for res in pbar:
             self.mywind.update_fm(res, 
-                                  dtime=dtime)
+                                  dtime=dtime,
+                                  ntabs = ntabs+1
+                                  )
             rcell_vec_cdx,MR_grid_cdx,MZ_grid_cdx,temperature_cdx,ionization_parameter_cdx,column_density_table_cdx = res
             pbar.set_description("\t" * ntabs + f"(t_sim = {self.mywind._mcgv_time(self.mywind.tottime):e}, r=[{rcell_vec_cdx[0]:.2f},{rcell_vec_cdx[2]:.2f}] rg) Updating force multipliers")
 
@@ -1755,8 +1772,11 @@ class Quasar:
                                       )
                           ) * u.Hz
 
-    gaussleg_y_r,   gaussleg_w_r   = np.polynomial.legendre.leggauss(self.mypars.gaussleg_nr)     # Cylindrical radius (normalized)
-    gaussleg_y_phi, gaussleg_w_phi = np.polynomial.legendre.leggauss(self.mypars.gaussleg_ntheta) # Azimuhtal angle (normalized)
+    gaussleg_nr     = 15 # self.mypars.gaussleg_nr
+    gaussleg_ntheta = 15 # self.mypars.gaussleg_ntheta
+
+    gaussleg_y_r,   gaussleg_w_r   = np.polynomial.legendre.leggauss(gaussleg_nr)     # Cylindrical radius (normalized)
+    gaussleg_y_phi, gaussleg_w_phi = np.polynomial.legendre.leggauss(gaussleg_ntheta) # Azimuhtal angle (normalized)
 
     phidisk = np.pi * (gaussleg_y_phi + 1.) # Azimuthal angle
 
@@ -1828,7 +1848,7 @@ class Quasar:
 
     # Add in disk annuli
     #for rdx in tqdm(range(self.mypars.gaussleg_nr), desc="\t"*(ntabs+9)+f"Disk annulus", ncols=0):
-    for rdx in range(self.mypars.gaussleg_nr):
+    for rdx in range(gaussleg_nr):
       rdisk = self.mydisk.rstar[0] * np.power(self.mydisk.rstar[-1]/self.mydisk.rstar[0], 
                                               (gaussleg_y_r[rdx] + 1)/2
                                               ) # Units rg (log)
@@ -1906,13 +1926,13 @@ class Quasar:
                                   check=True)
           cloudy_fitsname = next((s for s in file_list if sub_cloudy_fitsname in s), None)
         except:
-          #print("\t"*ntabs + f"Failed to remove {dir_path}/{cloudy_fitsname}")
           cloudy_fitsname = None
 
       # Need to run Cloudy to get the gas temperature and line emissions
       cloudy_sim = cloudy(0,                 # 0 = emission, 1 = absorption
                           self.mypars,       # instance of readpars
                           self.myatoms,      # instance of atomic class
+                          self.mydisk,
                           frequency, 
                           totfnu, # ionizing spectrum
                           rhoindex=0.0, 
@@ -1923,63 +1943,34 @@ class Quasar:
                           verbose = False,
                           ntabs = ntabs+1
                           )
-      temperature_cdx = cloudy_sim.temperature
+      temperature_cdx          = cloudy_sim.temperature
       ionization_parameter_cdx = cloudy_sim.ionization_parameter
       column_density_table_cdx = cloudy_sim.column_density_array
 
-      nit = 0
       vth = np.sqrt(2 * const.k_B * temperature_cdx / const.m_p).to(u.cm/u.s)
-      # Iteratively determine the force multiplier:
-      # fm -> lSob -> lgt -> fm -|
-      # ^------------------------|
-      done = False
       # fm is the magnitudes of the force multiplier in each direction being sampled.
-      fm = np.ones((self.mypars.gaussleg_nr,
-                    self.mypars.gaussleg_ntheta))
-      #########################################################
+      fm = np.ones((gaussleg_nr,
+                    gaussleg_ntheta
+                    ))
       my_args = (f_grav_bh,
                  f_grav_disk,
                  f_elec_scat,
                  vth,
                  num_density,
-                 lgxi
+                 lgxi,
+                 gaussleg_nr,
+                 gaussleg_ntheta
                  )
       res = root(fun=lambda x: self._wnd_force_multipler_root_function(x, *my_args),
                  x0 = fm.ravel()
                  )
       if res.success:
-        fm = (res.x).reshape((self.mypars.gaussleg_nr,
-                              self.mypars.gaussleg_ntheta
+        fm = (res.x).reshape((gaussleg_nr,
+                              gaussleg_ntheta
                               ))
-      #########################################################
-      # TURN THIS PART INTO A ROOT FINDER: F(fm) = fm - f(fm) = 0
-      #while not done:
-      #  nit += 1
-      #  oldfm = np.copy(fm)
-
-      #  try:
-      #    ftot = f_grav_bh[None,None,:] + f_grav_disk[None,None,:] + f_elec_scat[None,None,:] * fm[:,:,None]
-      #  except:
-      #    print("\t" * ntabs + f"f_grav_bh = {f_grav_bh}")
-      #    print("\t" * ntabs + f"f_grav_disk = {f_grav_disk}")
-      #    print("\t" * ntabs + f"f_elec_scat = {f_elec_scat}")
-      #    print("\t" * ntabs + f"fm = {fm}")
-      #    input("paused for unit conversion error...")
-      #  lSob = (vth * vth / np.sqrt(np.sum(ftot*ftot, axis=-1))).decompose()
-      #  lgt  = np.log10((const.sigma_T * num_density * lSob).decompose())
-
-      #  fm = np.power(10.0, self.mywind.fmultgridfunc((lgt,lgxi)))
-
-      #  if np.all(np.fabs(fm/oldfm - 1) < tol):
-      #    done = True
-      #  else:
-      #    if nit > 1000:
-      #      print("\t" * ntabs + f"\t\t\t{rcell_vec} {np.log10((csiflux * 4 * np.pi * np.sum(rcell_vec*rcell_vec) * self.mydisk.rg**2).to(u.erg/u.s).value):.3f} {nit:3d}  {lgxi:e}  {lSob} {lgt}  {fm} {np.fabs(fm/oldfm - 1)}")
-      #      input("Pause")
-      #########################################################
 
       fm_vec = np.zeros((3,))
-      for rdx in range(self.mypars.gaussleg_nr):
+      for rdx in range(gaussleg_nr):
         rdisk = self.mydisk.rstar[0] * np.power(self.mydisk.rstar[-1]/self.mydisk.rstar[0], (gaussleg_y_r[rdx] + 1)/2) # Units rg (log)
 
         rdisk_vecs = np.array([rdisk * np.cos(phidisk),
@@ -2018,10 +2009,12 @@ class Quasar:
                                          f_elec_scat,
                                          vth,
                                          num_density,
-                                         lgxi
+                                         lgxi,
+                                         gaussleg_nr,
+                                         gaussleg_ntheta
                                          ):
-    xreshape = x.reshape((self.mypars.gaussleg_nr,
-                          self.mypars.gaussleg_ntheta
+    xreshape = x.reshape((gaussleg_nr,
+                          gaussleg_ntheta
                           ))
     ftot = f_grav_bh[None,None,:] + f_grav_disk[None,None,:] + f_elec_scat[None,None,:] * xreshape[:,:,None]
 

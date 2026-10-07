@@ -111,6 +111,7 @@ class AbsCloud:
     if runcloudy:
       cloud  = cloudy(self.mypars.datapath, cloudypath, 1,                 # 0 = emission, 1 = absorption
                       self.myatoms,
+                      self.mydisk, 
                       self.ionspecfreq, self.ionspecflux,            # ionizing spectrum
                       rhoindex=self.rhoindex, logrhoscale=self.logrhoscale, logrho0=self.logrho0, # density parameters
                       logZ=self.logZ,
@@ -137,7 +138,7 @@ class AbsCloud:
 
       # Density - use formula for the globule in Hazy
       norm_depth = 1.0 - self.depth/(10.0**self.logrhoscale * u.cm)
-      norm_depth[norm_depth <= 0] = 1.0 - (10.0**(-softenning))
+      norm_depth[norm_depth <= 0] = 1.0 - (10.0**(-self.mypars.softenning))
       self.density = 10.0**(self.logrho0) * np.power(norm_depth, -self.rhoindex) / u.cm**3
 
       # Temperature - scale with density using the ideal gas law, assuming gas pressure balance

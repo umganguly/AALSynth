@@ -1,6 +1,6 @@
-import os
 import numpy             as np
 import matplotlib.pyplot as plt
+import os
 import time              as tm
 
 from astropy                 import constants as const
