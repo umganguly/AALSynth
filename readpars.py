@@ -202,6 +202,12 @@ class readpars:
             print(f"wind_mupdate not defined in {inputfile}")
             self.wind_mupdate = True
 
+         try: 
+            print(f"Lower radial bound = {self.minrg_bound}")
+         except AttributeError:
+            print(f"minrg_bound not defined in {inputfile}")
+            self.minrg_bound = 20
+
          ###########################################################################
          print("Observer parameters:")
          try:

@@ -138,7 +138,7 @@ class AbsCloud:
 
       # Density - use formula for the globule in Hazy
       norm_depth = 1.0 - self.depth/(10.0**self.logrhoscale * u.cm)
-      norm_depth[norm_depth <= 0] = 1.0 - (10.0**(-softenning))
+      norm_depth[norm_depth <= 0] = 1.0 - (10.0**(-self.mypars.softenning))
       self.density = 10.0**(self.logrho0) * np.power(norm_depth, -self.rhoindex) / u.cm**3
 
       # Temperature - scale with density using the ideal gas law, assuming gas pressure balance
