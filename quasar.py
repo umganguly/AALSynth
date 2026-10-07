@@ -2195,7 +2195,8 @@ class Quasar:
 
   #######################################################################################
   def grab_cloud_pars(self,
-                      clouds
+                      clouds,
+                      ntabs = 0
                       ):
     if clouds is not None:
       rcl         = np.array([cld.rcl                     for cld in clouds])
@@ -2250,8 +2251,19 @@ class Quasar:
           print("\t"*(ntabs+2) + f"              --> r = {rcl[i]:.3f}  theta = {thetacl[i]:.3f}")
           print("\t"*(ntabs+2) + f"rhoindex = {rhoindex[i]}  logrhoscale = {logrhoscale[i]} logrho0 = {logrho0[i]}")
           print("\t"*(ntabs+2) + f"log Z = {logZ[i]}  vcl_los = {vcl[i]}")
-        clouds.append(AbsCloud(self.mypars.datapath, self.mydisk, self.mycorona, self.myatoms,
-                               rcl[i], zcl[i], thetacl[i], rhoindex=rhoindex[i], logrhoscale=logrhoscale[i], logrho0=logrho0[i], logZ=logZ[i], vcl_los=vcl[i]))
+        clouds.append(AbsCloud(self.mypars, 
+                               self.mydisk, 
+                               self.mycorona, 
+                               self.myatoms,
+                               rcl[i], 
+                               zcl[i], 
+                               thetacl[i], 
+                               rhoindex=rhoindex[i], 
+                               logrhoscale=logrhoscale[i], 
+                               logrho0=logrho0[i], 
+                               logZ=logZ[i], 
+                               vcl_los=vcl[i])
+                               )
         if self.mypars.verbose:
           print("\t"*(ntabs+1) +  f"{i} Determining ionizing spectrum")
         cloudy_rootname = f"ABS-rho0{logrho0[i]}-index{rhoindex[i]}-scale{logrhoscale[i]}-logZ{logZ[i]}-zcl{zcl[i]}"
@@ -2524,7 +2536,8 @@ class Quasar:
   def reset_observer(self,
                      robs = None,
                      thetaobs = None,
-                     zobs = None
+                     zobs = None,
+                     ntabs = 0
                      ):
     if robs is None:
       self.mydisk.robs     = self.robs

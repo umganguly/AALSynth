@@ -25,7 +25,7 @@ mbh = 1.2e+8
 ############################################
 # Accretion disk parameters
 mdot = 0.72
-alpha = 0.1
+viscosity_alpha = 0.1
 nr = 300
 rlo = 0.1
 rhi = 1.0e+5

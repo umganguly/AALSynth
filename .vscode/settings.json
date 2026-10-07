@@ -1,3 +1,14 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:system"
+    "workbench.colorTheme": "Default High Contrast",
+    "remote.SSH.remotePlatform": {
+        "astronomy.umich.edu": "linux"
+    },
+    "terminal.integrated.profiles.linux": {
+        "tcsh (login)": {
+            "path": "/bin/tcsh",
+            "args": "-l"
+        }
+    },
+    "terminal.integrated.defaultProfile.linux": "tcsh (login)"
 }

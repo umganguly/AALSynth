@@ -140,7 +140,11 @@ class atomic:
             print("\t" * ntabs + basedir+'/'+datfile," does not exist")
 
     ###############################################################################################
-    def getspecies(self,anum,ion):
+    def getspecies(self,
+                   anum,
+                   ion,
+                   ntabs=0
+                   ):
         return np.extract((self.anum == anum) & (self.ion == ion), range(self.anum.size))
 
     ###############################################################################################
