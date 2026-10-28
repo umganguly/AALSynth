@@ -1621,24 +1621,12 @@ class Quasar:
             prtstr = f"Reason for timestep decrease ({self.mywind._mcgv_time(dtime)}): "
             prtstr += f"{np.sum(where_velocity_bad)} bounded superluminal cells "
             print("\t"*ntabs + prtstr)
-            self._wnd_print_bad_cells(drho,
-                                      dvR,
-                                      dvZ,
-                                      dvph,
-                                      where_velocity_bad,
-                                      ntabs = ntabs
-                                      )
-
-          [self.mywind.v_Z[where_velocity_bad], self.mywind.v_R[where_velocity_bad], self.mywind.v_phi[where_velocity_bad]] = \
-                                          0.9 * const.c.cgs * new_velocity_vecs[:,where_velocity_bad] / new_velocity_mags[None,where_velocity_bad]
-
-
-        # Update the force multiplier grid
-        if self.mypars.wind_mupdate and ((np.sum(where_density_changed)) > 0 or (np.sum(where_velocity_bad) > 0)):
-          self._wnd_force_multiplier_cylindrical(where_density_changed | where_velocity_bad,
-                                                  dtime = dtime,
-                                                  ntabs = ntabs+1
-                                                  )
+            print("\t"*ntabs + "-"*50)
+            print("\t"*ntabs + "Bad cells")
+            print("\t"*ntabs + "-"*50)
+            print("\t"*ntabs + f"RR = {self.mywind.RR[where_velocity_bad]/self.mydisk.rg}")
+            print("\t"*ntabs + f"ZZ = {self.mywind.ZZ[where_velocity_bad]/self.mydisk.rg}")
+            print("\t"*ntabs + "-"*50)
 
         # Is the timestep too small? Do we need to mask additional bins?
         if (dtime < mindt):
