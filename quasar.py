@@ -2301,7 +2301,8 @@ class Quasar:
                                                          zobs = zcl[i],
                                                          wavelength = clouds[i].ionspecfreq.to(u.Angstrom, equivalencies=u.spectral()),
                                                          lograd = True, 
-                                                         noplot = True
+                                                         noplot = True,
+                                                         ntabs = ntabs+1
                                                          )[0]
         try:
           dum = self._spectrum_scale
@@ -2331,7 +2332,9 @@ class Quasar:
         clouds[i].getcloudy(self.mypars.cloudypath, 
                             verbose = self.mypars.verbose, 
                             runcloudy = False, 
-                            softenning = self.mypars.softenning)
+                            softenning = self.mypars.softenning,
+                            ntabs = ntabs+1
+                            )
         (lognuFnu, log_ion_parm) = self._calc_ion_parm(clouds[i])
         sdx = np.argsort(log_ion_parm)
         if self.mypars.verbose:
@@ -2381,7 +2384,9 @@ class Quasar:
           clouds[i].getcloudy(self.mypars.cloudypath, 
                               verbose = self.mypars.verbose, 
                               runcloudy = True, 
-                              softenning = self.mypars.softenning)
+                              softenning = self.mypars.softenning,
+                              ntabs = ntabs+1
+                              )
           (lognuFnu, log_ion_parm) = self._calc_ion_parm(clouds[i])
           sdx = np.argsort(log_ion_parm)
           self._add_to_cheb(clouds[i])
@@ -2413,7 +2418,10 @@ class Quasar:
                                   logelemabund+logionfrac
                                   )
 
-            clouds[i].iondensity[sdx,iondx] = clouds[i].density[sdx] * np.power(10.0,logionfrac)
+            if clouds[i].density.size > 1:
+              clouds[i].iondensity[sdx,iondx] = clouds[i].density[sdx] * np.power(10.0,logionfrac)
+            else:
+              clouds[i].iondensity[sdx,iondx] = clouds[i].density * np.power(10.0,logionfrac)
 
           if not np.all(np.isfinite(clouds[i].iondensity)):
             print("\t" * ntabs +  "ERROR IN GETTING ION DENSITIES:")
