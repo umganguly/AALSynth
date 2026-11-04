@@ -106,17 +106,21 @@ class AbsCloud:
                 cloudypath,
                 softenning = 0.1,
                 verbose = False,
-                runcloudy = False
+                runcloudy = False,
+                ntabs = 0
                 ):
     if runcloudy:
-      cloud  = cloudy(self.mypars.datapath, cloudypath, 1,                 # 0 = emission, 1 = absorption
+      print("\t"*ntabs + f"AbsCloud.getcloudy: verbose = {verbose}")
+      cloud  = cloudy(1,                 # 0 = emission, 1 = absorption
+                      self.mypars, 
                       self.myatoms,
                       self.mydisk, 
                       self.ionspecfreq, self.ionspecflux,            # ionizing spectrum
                       rhoindex=self.rhoindex, logrhoscale=self.logrhoscale, logrho0=self.logrho0, # density parameters
                       logZ=self.logZ,
                       zstar = self.zcl,
-                      verbose = verbose
+                      verbose = verbose,
+                      ntabs = ntabs+1
                       )
 
       self.cloudyran = True
@@ -148,6 +152,9 @@ class AbsCloud:
       self.iondensity = np.zeros((self.depth.size,self.myatoms.nion)) * (u.cm**-3)
 
     self.dr       = np.zeros(self.depth.shape) * u.cm
-    self.dr[1:-1] = 0.5 * (self.depth[2:] - self.depth[:-2])
-    self.dr[ 0]   = self.dr[ 1]
-    self.dr[-1]   = self.dr[-2]
+    if self.dr.size > 1:
+      self.dr[1:-1] = 0.5 * (self.depth[2:] - self.depth[:-2])
+      self.dr[ 0]   = self.dr[ 1]
+      self.dr[-1]   = self.dr[-2]
+    else:
+      self.dr = self.depth
