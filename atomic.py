@@ -143,7 +143,7 @@ class atomic:
     def getspecies(self,
                    anum,
                    ion,
-                   ntabs=0
+                   ntabs = 0
                    ):
         return np.extract((self.anum == anum) & (self.ion == ion), range(self.anum.size))
 
