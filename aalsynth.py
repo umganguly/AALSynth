@@ -205,7 +205,7 @@ def interactive_absorption(myquasar):
                                  )
 
   cloud_index = 0
-  user_choice = 'R'
+  user_choice = 'b'
   done = False
   while not done:
     match user_choice:
@@ -347,10 +347,13 @@ def interactive_absorption(myquasar):
     if user_choice != 'Q':
       myquasar.print_clouds(clouds)
       rcl, zcl, thetacl, logrhoscale, rhoindex, logrho0, logZ, vcl = myquasar.grab_cloud_pars(clouds)
-      myquasar._abs_plot(totflux, unabsflux,
-                         vcl = vcl,
-                         clouds = clouds
-                         )
+      try:
+        myquasar._abs_plot(totflux, unabsflux,
+                          vcl = vcl,
+                          clouds = clouds
+                          )
+      except:
+        pass
       (xclp, yclp) =  myquasar._abs_project_clouds(rcl, 
                                                    zcl, 
                                                    thetacl
