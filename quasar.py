@@ -1591,6 +1591,8 @@ class Quasar:
           #                                      self.mywind.number_density
           #                                      )
 
+          self.mywind.velocity_check()
+
           # --- Output ---
           self.mywind.plot_grid(rho_tmp,
                                 tplt,

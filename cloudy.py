@@ -25,6 +25,8 @@ class cloudy:
                ntabs = 0
                ):
 
+    print("\t"*ntabs + f"cloudy.__init__: verbose = {verbose}")
+
     self.mypars = mypars
     self.myatoms = myatoms
     self.Abs_or_Em = Abs_or_Em
