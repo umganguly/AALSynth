@@ -9,7 +9,7 @@ class readpars:
             with open(inputfile, 'r') as f:
                print(f"Reading parameters from {inputfile}")
                lines = f.readlines()
-               for line in tqdm(lines):
+               for line in tqdm(lines, ncols=0):
                   if line.startswith('#'):
                       continue
                   key, value = line.split('=')
