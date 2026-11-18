@@ -25,8 +25,6 @@ class cloudy:
                ntabs = 0
                ):
 
-    print("\t"*ntabs + f"cloudy.__init__: verbose = {verbose}")
-
     self.mypars = mypars
     self.myatoms = myatoms
     self.Abs_or_Em = Abs_or_Em
@@ -37,7 +35,6 @@ class cloudy:
                         logrhoscale,
                         logrho0
                         )
-    print("\t"*ntabs + f"cloudy.__init__: lognuFnu = {lognuFnu}")
     if Abs_or_Em == 0: # Emission - Has not been developed yet
       self.rootname = f"EM-hden{logrho0:.2f}-nuFnu{lognuFnu:.2f}-rstar{rstar:.2f}-zstar{zstar:.2f}"
     else: # Absorption
@@ -73,19 +70,20 @@ class cloudy:
             f.write(f"nuF(nu) = {lognuFnu:.2f}\n")
 
           # Need to use self.mypars.zqso and zcl to determine the cosmological redshift of the absorber....
-          comove_dist = LambdaCDM(H0=70, Om0=0.3, Ode0=0.7).comoving_distance(self.mypars.zqso)
+          cosmo = LambdaCDM(H0=70, Om0=0.3, Ode0=0.7)
+          comove_dist = cosmo.comoving_distance(self.mypars.zqso)
           rlos = comove_dist - np.sqrt(rstar*rstar + zstar*zstar) * mydisk.rg
-          zabs = z_at_value(LambdaCDM(H0=70, Om0=0.3, Ode0=0.7).comoving_distance, 
+          zabs = z_at_value(cosmo.comoving_distance, 
                             rlos
                             )
           f.write(f"table HM05 redshift {zabs}\n")
           f.write(f"CMB redshift {zabs}\n")
-                  
+  
           f.write("Cosmic rays background\n")
 
           f.write(f"metals {logZ} log\n")
 
-          f.write("stop temperature 3 K linear\n")
+          f.write(f"stop temperature {cosmo.Tcmb0*(1.0+zabs)} K linear\n")
           f.write("iterate\n")
           f.write("print last iteration\n")
 
@@ -135,7 +133,7 @@ class cloudy:
     ovrname = self.mypars.datapath+f"Cloudy_runs/{self.rootname}.ovr"
     if os.path.exists(ovrname):
       if self.Abs_or_Em == 0: # Line-emitting gas
-        self._writeemfits()
+        self._writeemfits(ntabs = ntabs+1)
       else:
         self._writeabsfits()
 
@@ -186,7 +184,8 @@ class cloudy:
       try:
         subprocess.run(["rm", f"{self.mypars.datapath}Cloudy_runs/{self.rootname}.lin"])
         subprocess.run(["rm", f"{self.mypars.datapath}Cloudy_runs/{self.rootname}.col"])
-        subprocess.run(["rm", f"{self.mypars.datapath}Cloudy_runs/{self.rootname}.sed"])
+        if os.path.exists(f"{self.mypars.datapath}Cloudy_runs/{self.rootname}.sed"):
+          subprocess.run(["rm", f"{self.mypars.datapath}Cloudy_runs/{self.rootname}.sed"])
       except:
         pass
     else:
@@ -199,12 +198,14 @@ class cloudy:
 
   ######################################################
   def _readcloudy(self,
+                  verbose = False,
                   ntabs = 0
                   ):
     # Now we need to read in the Cloudy outputs...
     fitsname = self.mypars.datapath+f"Cloudy_runs/{self.rootname}.fits"
     if os.path.exists(fitsname):
-      print("\t"*ntabs + f"cloudy._readcloudy: Attempting to read {fitsname}")
+      if verbose:
+        print("\t"*ntabs + f"cloudy._readcloudy: Attempting to read {fitsname}")
       if self.Abs_or_Em == 0: # Line-emitting gas
         with fits.open(fitsname) as hdul:
           try:
@@ -296,10 +297,10 @@ class cloudy:
                   ionization_parameter = float(split_line[3])
               except:
                 if len(split_line[2]) > 5:
-                  print(f"Error: cloudy._writeemfits could not resolve {split_line[2][5:]} as a float from {self.rootname}.out")
+                  print("\t"*ntabs + f"Error: cloudy._writeemfits could not resolve {split_line[2][5:]} as a float from {self.rootname}.out")
                 else:
                   ionization_parameter = float(split_line[3])
-                  print(f"Error: cloudy._writeemfits could not resolve {split_line[3]} as a float from {self.rootname}.out")
+                  print("\t"*ntabs + f"Error: cloudy._writeemfits could not resolve {split_line[3]} as a float from {self.rootname}.out")
                 print(f"{split_line}")
       except:
         print("\t"*ntabs + f"cloudy._writeemfits could not resolve ioniation parameter from {self.rootname}.out")

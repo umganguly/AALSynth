@@ -11,7 +11,7 @@ from astropy.io              import fits
 from astropy.table           import Table
 from multiprocessing         import Pool
 from scipy.interpolate       import RegularGridInterpolator, CubicSpline
-from scipy.special           import kv
+from scipy.special           import kn
 from tqdm                    import tqdm
 
 from cloudy import cloudy
@@ -98,13 +98,13 @@ class mcgv:
                     if pool_tuple_output._number_left < nproc_left:
                         pbar.update(nproc_left-pool_tuple_output._number_left)
                         nproc_left = pool_tuple_output._number_left
-            self.number_density = np.zeros(self.RR.shape) / u.cm**3
+            number_density = np.zeros(self.RR.shape) / u.cm**3
             for rzdx in range(self.R.size):
-                self.number_density[rzdx,:] = pool_tuple_output.get()[rzdx]
+                number_density[rzdx,:] = pool_tuple_output.get()[rzdx]
             mdu = u.g / u.cm**3
-            #self.number_density[self.boundary_mask] = np.where(self.number_density[self.boundary_mask].to(u.cm**-3).value < 1.0e+10, #(1.66e-14 * mdu / const.u).to(u.cm**-3).value,
-            #                               1.0e+10, # (1.66e-14 * mdu / const.u).to(u.cm**-3).value,
-            #                               self.number_density[self.boundary_mask].to(u.cm**-3).value) * u.cm**-3
+
+            self.ref_number_density = np.max(number_density)
+            self.ln_number_density = np.log(number_density / self.ref_number_density + sys.float_info.epsilon)
 
             with Pool(self.mypars.nproc) as pool, tqdm(total=self.R.size, ncols=0, desc="\t"*(ntabs+1) + "Fetching temperatures") as pbar:
                 pool_tuple_output = pool.starmap_async(self.mydisk.verticaltemperature, 
@@ -128,9 +128,15 @@ class mcgv:
                                                         self.myatoms.photo_Z.size
                                                         )) / u.cm**2
 
-        self.drho = np.zeros_like(self.number_density) * u.g
+        self.dln_number_density = np.zeros(self.ln_number_density.shape)
         self.adiabatic_index = 5./3.
         self.specific_enthalpy = None
+
+        for arrstr,arr in [("number density", self.ref_number_density * np.exp(self.ln_number_density) ),
+                           (   "temperature", self.temperature                                         )
+                          ]:
+            if not self._sanity_check(arrstr,arr, function="mcgv.__init__"):
+                input("Insane")
 
         if not self.bounded:
             print("\t" * ntabs + "Grabbing components of BH gravity")
@@ -163,15 +169,16 @@ class mcgv:
 
         print("\t" * ntabs + f"Initializing velocity field")
         # --- Initial Fields ---
+        # Work with u = gamma v, instead of just v in order to unbound the physically acceptable range:
+        #    u_i = gamma v_i
+        #    gamma = sqrt(1 + sum(u_i**2)/c**2)
         # Use the thermal speed = v_rms = sqrt(3 k T / m) at the tau=1 surface
         # What is the direction from the tau=1 surface? Normal to it?
         # self.mydisk.dzdr gives the slope of the tau=1 surface....
         # slope of normal is -1/self.mydisk.dzdr
         # so normal is at an angle = - np.arctan(self.mydisk.dzdr)
         if not self.bounded:
-            self.v_Z   = np.zeros(self.RR.shape) * (u.cm/u.s)
-            self.v_R   = np.zeros(self.RR.shape) * (u.cm/u.s)
-            self.v_phi = np.zeros(self.RR.shape) * (u.cm/u.s)
+            self.u     = np.zeros((3,) + self.RR.shape) * (u.cm/u.s)   # Convention for (3,) = (r, z, phi)
 
             init_mask = (self.ZZ/self.mydisk.rg < 1.2 * self.mydisk.zt1[:,None])
 
@@ -180,22 +187,9 @@ class mcgv:
             init_mask = self.in_disk
 
         # Boundary or initial conditions
-        v_rms   = np.sqrt(3. * const.k_B.cgs * self.temperature / const.u.cgs).decompose(bases=u.cgs.bases)
-        v_angle = -np.arctan(1.0/self.mydisk.dzdr)
-        if np.sum(v_rms/const.c.cgs > 1):
-            input(f"Superluminal thermal speeds! {v_rms}")
+        self._enforce_boundary_conditions(ntabs = ntabs+1)
 
-        ss = np.sqrt(self.RR * self.RR + self.ZZ * self.ZZ)
-
-        self.v_Z[  init_mask] = 2.0 * v_rms[init_mask] * np.cos((np.broadcast_to(v_angle, self.RR.T.shape).T)[init_mask])
-        self.v_R[  init_mask] = 1.0 * v_rms[init_mask] * np.sin((np.broadcast_to(v_angle, self.RR.T.shape).T)[init_mask])
-        self.v_phi[init_mask] = np.sqrt(const.G * self.mypars.mbh / (ss[init_mask] + sys.float_info.epsilon * u.cm) ).decompose(bases=u.cgs.bases)
-
-        self.velocity_check()
-
-        self.dv_R   = np.zeros_like(self.v_R)
-        self.dv_Z   = np.zeros_like(self.v_Z)
-        self.dv_phi = np.zeros_like(self.v_phi)
+        self.du = np.zeros_like(self.u)
 
         print("\t" * ntabs + "Setting force multiplier functions")
         ######################################################
@@ -232,9 +226,6 @@ class mcgv:
         self.MRgrid[self.in_disk] = 1.0
         self.MZgrid[self.in_disk] = 1.0
 
-        print("\t" * ntabs + "Commiting None-sequitters")
-        self.lorentz_factor = np.ones(self.RR.shape)
-
         if not self.bounded:
             print("\t" * ntabs + "Writing initial wind")
             self.write_wind()
@@ -246,7 +237,7 @@ class mcgv:
             plt.ion()
         plt.clf()
         plt.pause(5)
-        self.plot_grid(self.number_density * const.u,
+        self.plot_grid(self.ref_number_density * np.exp(self.ln_number_density) * const.u,
                        -31.0 * u.s,
                        0.0 * u.s,
                        0.0 * u.s,
@@ -260,187 +251,203 @@ class mcgv:
         plt.pause(5)
 
     ######################################################
+    def _div_dR(self,
+                A,
+                ntabs = 0
+                ):
+
+        for arrstr,arr in [(  "A", A        ),
+                           ("DRR", self.DRR )
+                          ]:
+            if not self._sanity_check(arrstr,
+                                      arr, 
+                                      function="mcgv._div_R",
+                                      ntabs = ntabs+1
+                                      ):
+                input("Insane")
+
+        dA_dR         = np.zeros_like(A) / u.cm
+        dA_dR[1:-1,:] = (  A[ 2:,  :]  - A[:-2, :] ) / (2 * self.DRR[1:-1, :] + sys.float_info.epsilon * u.cm)
+
+        return dA_dR
+
+    ######################################################
+    def _div_dZ(self,
+                A,
+                ntabs = 0
+                ):
+
+        for arrstr,arr in [(  "A", A        ),
+                           ("DZZ", self.DZZ )
+                          ]:
+            if not self._sanity_check(arrstr,
+                                      arr, 
+                                      function="mcgv._div_Z",
+                                      ntabs = ntabs+1
+                                      ):
+                input("Insane")
+
+        dA_dZ         = np.zeros_like(A) / u.cm
+        dA_dZ[1:-1,:] = ( A[ 2:,  :] - A[:-2, :] ) / (2 * self.DZZ[1:-1, :] + sys.float_info.epsilon * u.cm)
+
+        return dA_dZ
+
+    ######################################################
+    def _enforce_boundary_conditions(self,
+                                     ntabs = 0
+                                     ):
+        for arrstr,arr in [("1.0/self.mydisk.dzdr", 1.0/self.mydisk.dzdr),
+                           ("temperature", self.temperature ),
+                           ("RR", self.RR),
+                           ("ZZ", self.ZZ)
+                          ]:
+            if not self._sanity_check(arrstr,
+                                      arr, 
+                                      function="mcgv._enforce_boundary_conditions",
+                                      ntabs = ntabs+1
+                                      ):
+                input("Insane")
+
+
+        init_mask = (self.ZZ/self.mydisk.rg < 1.2 * self.mydisk.zt1[:,None])
+
+        v_angle = -np.arctan(1.0/self.mydisk.dzdr)
+        thermal_parameter = (const.k_B.cgs * self.temperature / (const.u.cgs * const.c.cgs * const.c.cgs)).decompose()
+        average_v_mj = 2 * const.c.cgs * thermal_parameter * (thermal_parameter + 1) * (np.exp(-1/(thermal_parameter + sys.float_info.epsilon))  + sys.float_info.epsilon) / (kn(2, 1/(thermal_parameter + sys.float_info.epsilon))  + sys.float_info.epsilon)
+        if np.any(np.isnan(average_v_mj)):
+            average_v_mj = np.sqrt(3 * const.k_B.cgs * self.temperature / const.u.cgs).to(u.cm/u.s)
+
+        ss = np.sqrt(self.RR * self.RR + self.ZZ * self.ZZ)
+
+        v_R = average_v_mj[init_mask] * np.sin((np.broadcast_to(v_angle, self.RR.T.shape).T)[init_mask])
+        v_Z = average_v_mj[init_mask] * np.cos((np.broadcast_to(v_angle, self.RR.T.shape).T)[init_mask])
+        v_P = np.sqrt(const.G * self.mypars.mbh / (ss[init_mask] + sys.float_info.epsilon * u.cm) ).decompose(bases=u.cgs.bases)
+        vsq = v_R * v_R + v_Z * v_Z + v_P * v_P
+        lorentz_factor = 1.0 / np.sqrt(1. - vsq / (const.c.cgs * const.c.cgs))
+
+        self.u[:, init_mask] = np.array([v_R.to(u.cm/u.s).value, 
+                                         v_Z.to(u.cm/u.s).value, 
+                                         v_P.to(u.cm/u.s).value
+                                         ]) * lorentz_factor * (u.cm/u.s)
+
+        if np.any(np.isnan(self.u)):
+            input("paused in mcgv._enforce_boundary_conditions for de-nanification")
+
+    ######################################################
     # Relativistic Euler equation residuals
     def _EULER_cylindrical(self, 
                           dtime, 
-                          which_residual, # = ['rho','vR','vZ','vph']
+                          which_residual, # = ['lnrho','uR','uZ','uph']
                           ntabs = 0
                           ):  
+        for arrstr,arr in [("u", self.u),
+                           ("ln_number_density", self.ln_number_density ),
+                           ("RR", self.RR),
+                           ("ZZ", self.ZZ)
+                          ]:
+            if not self._sanity_check(arrstr,
+                                      arr, 
+                                      function="mcgv._EULER_cylindrical",
+                                      ntabs = ntabs+1
+                                      ):
+                input("Insane")
+
+        u_R   = self.u[0,:,:]
+        u_Z   = self.u[1,:,:]
+        u_phi = self.u[2,:,:]
+
+        number_density = self.ref_number_density * np.exp(self.ln_number_density)
+
+        KE_R  = const.u * number_density * self.specific_enthalpy * u_R * u_R
+        KE_Z  = const.u * number_density * self.specific_enthalpy * u_Z * u_Z
+        KE_RZ = const.u * number_density * self.specific_enthalpy * u_R * u_Z
+        KE_P  = const.u * number_density * self.specific_enthalpy * u_phi * u_phi
+
         match which_residual:
-            case 'rho': # Continuity
+            case 'lnrho': # Continuity
                 # Mass flux in r, z directions ---
-                massflux_R = const.u.cgs * self.number_density * self.lorentz_factor * self.v_R # g / cm**2 / s
-                massflux_Z = const.u.cgs * self.number_density * self.lorentz_factor * self.v_Z # g / cm**2 / s
+                massflux_R = const.u.cgs * number_density * u_R # g / cm**2 / s
+                massflux_Z = const.u.cgs * number_density * u_Z # g / cm**2 / s
 
-                dR_mdot_RdR         = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.g / u.cm**3 / u.s)
-                dR_mdot_RdR[1:-1,:] = ( ( (self.RR[2:, :]) * massflux_R[ 2:,  :] ) - ( (self.RR[:-2, :]) * massflux_R[ :-2, :  ] ) ) / (2 * self.DRR[1:-1, :] * self.RR[1:-1, :] + sys.float_info.epsilon * u.cm**2)   # g / cm**3 / s
+                dR_mdot_RdR = self._div_dR(self.RR * massflux_R) /  self.RR
+                dmdot_dZ    = self._div_dZ(massflux_Z)
 
-                dmdot_dZ         = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.g / u.cm**3 / u.s)
-                dmdot_dZ[:,1:-1] = ( massflux_Z[ :, 2:] - massflux_Z[:  , :-2] ) / (2 * self.DZZ[:,1:-1] + sys.float_info.epsilon * u.cm) # g / cm**3 / s
-
-                lhs_rho = dR_mdot_RdR + dmdot_dZ
+                lhs_rho = (dR_mdot_RdR + dmdot_dZ) / (const.u.cgs * self.ref_number_density)
                 rhs_rho = np.zeros_like(lhs_rho) # Place holder for not having continuity
 
-                drho = -dtime * (lhs_rho - rhs_rho)
-                drho[self.in_disk] = 0.0 * (u.g/u.cm**3)
+                dlnrho = -dtime * (lhs_rho - rhs_rho) / np.exp(self.ln_number_density)
+                dlnrho[self.in_disk] = -np.inf
 
-                bad_mask = self.boundary_mask & (drho < -const.u.cgs * self.number_density) & (self.number_density > 0)
-                if np.sum(bad_mask):
-                    print("\t"*ntabs + "-"*50)
-                    print("\t"*ntabs + f"{np.sum(bad_mask)} Bad drho cells")
-                    print("\t"*ntabs + "-"*50)
-                    print("\t"*ntabs + "r/rg         z/rg         d(num_dens)    num_dens     dR_ndot_RdR   dndot_dZ")
-                    for bdx in range(np.sum(bad_mask)):
-                        prtstr  = f"{self.RR[bad_mask][bdx]/self.mydisk.rg:10.6e} {self.ZZ[bad_mask][bdx]/self.mydisk.rg:10.6e}"
-                        prtstr += f" {drho[bad_mask][bdx]*(u.cm**3)/const.u.cgs:13.6e} {self.number_density[bad_mask][bdx]*(u.cm**3):13.6e}"
-                        prtstr += f" {dR_mdot_RdR[bad_mask][bdx]*(u.cm**3 * u.s)/const.u.cgs:13.6e} {dmdot_dZ[bad_mask][bdx]*(u.cm**3 * u.s)/const.u.cgs:13.6e}"
-                        print("\t"*ntabs + prtstr)
-                    print("\t"*ntabs + "-"*50)
+                return dlnrho
 
-                    drho[bad_mask] = -const.u.cgs * self.number_density[bad_mask]
-
-                return drho
-
-            case 'vR': # Radial Momentum
-                dv_R_dR         = np.zeros_like(self.v_R) / np.ones_like(self.DRR)
-                dv_R_dR[1:-1,:] = ( self.v_R[2:, :] - self.v_R[:-2, :] ) / (2 * self.DRR[1:-1, :] + sys.float_info.epsilon * u.cm)
-
-                dv_R_dZ         = np.zeros_like(self.v_R) / np.ones_like(self.ZZ)
-                dv_R_dZ[:,1:-1] = ( self.v_R[:, 2:] - self.v_R[:, :-2]) / (2 * self.DZZ[:,1:-1] + sys.float_info.epsilon * u.cm)
-
-                dP_dR         = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne / u.cm**2) / np.ones_like(self.DRR)
-                dP_dR[1:-1,:] = (self.P_total[2:,:] - self.P_total[:-2,:]) / (2 * self.DRR[1:-1, :] + sys.float_info.epsilon * u.cm)
+            case 'uR': # Radial Momentum
+                dRKE_R_dR = self._div_dR(self.RR * KE_R)
+                dKE_RZ_dZ = self._div_dZ(KE_RZ)
+                dP_dR     = self._div_dR(self.P_total)
 
                 lhs_R   = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne/u.cm**3)
                 rhs_R   = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne/u.cm**3)
 
                 lhs_R[self.boundary_mask] = \
-                    const.u * self.number_density[self.boundary_mask] * self.specific_enthalpy[self.boundary_mask] * self.lorentz_factor[self.boundary_mask]**2 * \
-                    ( self.v_R[self.boundary_mask] * dv_R_dR[self.boundary_mask] + self.v_Z[self.boundary_mask] * dv_R_dZ[self.boundary_mask] - self.v_phi[self.boundary_mask]**2 / self.RR[self.boundary_mask] ) \
+                    ( dRKE_R_dR[self.boundary_mask] / self.RR[self.boundary_mask] + dKE_RZ_dZ[self.boundary_mask] - KE_P[self.boundary_mask] / self.RR[self.boundary_mask] ) \
                     + dP_dR[self.boundary_mask]
 
                 aRtot = self.BH_gR[self.boundary_mask] + self.disk_gR[self.boundary_mask] + self._g_rad_R()[self.boundary_mask]
-                rhs_R[self.boundary_mask] = (const.u * self.number_density[self.boundary_mask] * self.lorentz_factor[self.boundary_mask] * aRtot).decompose(bases=u.cgs.bases)
+                rhs_R[self.boundary_mask] = (const.u * number_density[self.boundary_mask] * self._lorentz_factor()[self.boundary_mask] * aRtot).decompose(bases=u.cgs.bases)
 
-                dvR = (-dtime * (lhs_R - rhs_R)
-                       / (const.u * self.number_density * self.specific_enthalpy * self.lorentz_factor**2 + sys.float_info.epsilon * (u.g/u.cm**3))
+                duR = (-dtime * (lhs_R - rhs_R)
+                       / (const.u * number_density * self.specific_enthalpy + sys.float_info.epsilon * (u.g/u.cm**3))
                        ).decompose(bases=u.cgs.bases)
-                dvR[self.in_disk] = 0.0 * (u.cm/u.s)
+                duR[self.in_disk] = 0.0 * (u.cm/u.s)
 
-                bad_mask = self.boundary_mask & (np.fabs(dvR) >= const.c.cgs) & (self.number_density > 0)
-                if np.sum(bad_mask):
-                    print("\t"*ntabs + "-"*50)
-                    print("\t"*ntabs + f"{np.sum(bad_mask)} Bad dvR cells")
-                    print("\t"*ntabs + "-"*50)
-                    print("\t"*ntabs + "r/rg         z/rg         dvR/c         vR/c         lhs_R         rhs_R")
-                    for bdx in range(np.sum(bad_mask)):
-                        prtstr  = f"{self.RR[bad_mask][bdx]/self.mydisk.rg:10.6e} {self.ZZ[bad_mask][bdx]/self.mydisk.rg:10.6e}"
-                        prtstr += f" {dvR[bad_mask][bdx]/const.c.cgs:13.6e} {self.v_R[bad_mask][bdx]/const.c.cgs:13.6e}"
-                        prtstr += f" {lhs_R[bad_mask][bdx]:13.6e} {rhs_R[bad_mask][bdx]:13.6e}"
-                        print("\t"*ntabs + prtstr)
-                    print("\t"*ntabs + "-"*50)
+                return duR
 
-                bad_mask = self.boundary_mask & (np.fabs(dvR) >= const.c.cgs)
-                if np.sum(bad_mask):
-                    dvR[bad_mask] = 0.0 * (u.cm/u.s)
-
-                return dvR
-
-            case 'vZ': # Vertical Momentum
-                dv_Z_dR         = np.zeros_like(self.v_Z) / np.ones_like(self.DRR)
-                dv_Z_dR[1:-1,:] = ( self.v_Z[2:, :] - self.v_Z[:-2, :] ) / (2 * self.DRR[1:-1, :] + sys.float_info.epsilon * u.cm)
-
-                dv_Z_dZ         = np.zeros_like(self.v_Z) / np.ones_like(self.ZZ)
-                dv_Z_dZ[:,1:-1] = ( self.v_Z[:, 2:] - self.v_Z[:, :-2]) / (2 * self.DZZ[:,1:-1] + sys.float_info.epsilon * u.cm)
-
-                dP_dZ         = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne / u.cm**2) / np.ones_like(self.DZZ)
-                dP_dZ[1:-1,:] = (self.P_total[2:,:] - self.P_total[:-2,:]) / (2 * self.DZZ[1:-1, :] + sys.float_info.epsilon * u.cm)
+            case 'uZ': # Vertical Momentum
+                dRKE_RZ_dR = self._div_dR(self.RR * KE_RZ)
+                dKE_Z_dZ   = self._div_dZ(KE_Z)
+                dP_dZ      = self._div_dZ(self.P_total)
 
                 lhs_Z   = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne/u.cm**3)
                 rhs_Z   = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne/u.cm**3)
 
                 lhs_Z[self.boundary_mask] = \
-                    const.u * self.number_density[self.boundary_mask] * self.specific_enthalpy[self.boundary_mask] * self.lorentz_factor[self.boundary_mask]**2 * \
-                    ( self.v_R[self.boundary_mask] * dv_Z_dR[self.boundary_mask] + self.v_Z[self.boundary_mask] * dv_Z_dZ[self.boundary_mask] ) \
+                    ( dRKE_RZ_dR[self.boundary_mask] / self.RR[self.boundary_mask] + dKE_Z_dZ[self.boundary_mask] ) \
                     + dP_dZ[self.boundary_mask]
 
                 aZtot = (self.BH_gZ[self.boundary_mask] + self.disk_gZ[self.boundary_mask] + self._g_rad_Z()[self.boundary_mask]) 
-                rhs_Z[self.boundary_mask] = (const.u * self.number_density[self.boundary_mask] * self.lorentz_factor[self.boundary_mask] * aZtot).decompose(bases=u.cgs.bases)
+                rhs_Z[self.boundary_mask] = (const.u * number_density[self.boundary_mask] * self._lorentz_factor()[self.boundary_mask] * aZtot).decompose(bases=u.cgs.bases)
 
-                Dhgsq = const.u * self.number_density * self.specific_enthalpy * self.lorentz_factor**2 + sys.float_info.epsilon * (u.g/u.cm**3)
+                duZ = (-dtime * (lhs_Z - rhs_Z) / (const.u * number_density * self.specific_enthalpy + sys.float_info.epsilon * (u.g/u.cm**3) ) ).decompose(bases=u.cgs.bases)
+                duZ[self.in_disk] = 0.0 * (u.cm/u.s)
 
-                dvZ = (-dtime * (lhs_Z - rhs_Z) / Dhgsq ).decompose(bases=u.cgs.bases)
-                dvZ[self.in_disk] = 0.0 * (u.cm/u.s)
+                return duZ
 
-                bad_mask = self.boundary_mask & (np.fabs(dvZ) >= const.c.cgs) & (self.number_density > 0)
-                if np.sum(bad_mask):
-                    print("\t"*ntabs + "-"*50)
-                    print("\t"*ntabs + f"{np.sum(bad_mask)} Bad dvZ cells")
-                    print("\t"*ntabs + "-"*50)
-                    print("\t"*ntabs + "r/rg         z/rg         dvZ/c          vZ/c          lhs_Z/Dhgsq  rhs_Z/Dhgsq  g_BH          g_disk        g_rad         num dens")
-                    for bdx in range(np.sum(bad_mask)):
-                        prtstr  = f"{self.RR[bad_mask][bdx]/self.mydisk.rg:10.6e} {self.ZZ[bad_mask][bdx]/self.mydisk.rg:10.6e}"
-                        prtstr += f" {dvZ[bad_mask][bdx]/const.c.cgs:13.6e} {self.v_Z[bad_mask][bdx]/const.c.cgs:13.6e}"
-                        prtstr += f" {(lhs_Z/Dhgsq)[bad_mask][bdx].decompose(bases=u.cgs.bases).value:13.6e} {(rhs_Z/Dhgsq)[bad_mask][bdx].decompose(bases=u.cgs.bases).value:13.6e}"
-                        prtstr += f" {self.BH_gZ[bad_mask][bdx].decompose(bases=u.cgs.bases).value:13.6e} {self.disk_gZ[bad_mask][bdx].decompose(bases=u.cgs.bases).value:13.6e} {self._g_rad_Z()[bad_mask][bdx].decompose(bases=u.cgs.bases).value:13.6e}"
-                        prtstr += f" {self.number_density[bad_mask][bdx].decompose(bases=u.cgs.bases).value:13.6e}"
-                        print("\t"*ntabs + prtstr)
-                    print("\t"*ntabs + "-"*50)
+            case 'uph': # Azimuthal equation (w/ angular momentum conservation)
+                ell = self.specific_enthalpy * self.RR * u_phi # cm**2 / s
 
-                bad_mask = self.boundary_mask & (np.fabs(dvZ) >= const.c.cgs)
-                if np.sum(bad_mask):
-                    dvZ[bad_mask] = 0.0 * (u.cm/u.s)
+                RDvRell = const.u.cgs * self.RR * number_density * u_R * ell
+                DvZell  = const.u.cgs *           number_density * u_Z * ell
 
-                return dvZ
-
-            case 'vph': # Azimuthal equation (w/ angular momentum conservation)
-                ell = self.specific_enthalpy * self.lorentz_factor * self.RR * self.v_phi # cm**2 / s
-
-                # D = rho gamma... ("relativistic density")
-                RDvRell = self.RR * const.u * self.number_density * self.lorentz_factor * self.v_R * ell # dyne      = g cm / s**2 = cm (g / cm**3) (cm / s) (cm**2 / s)
-                DvZell  =           const.u * self.number_density * self.lorentz_factor * self.v_Z * ell # dyne / cm = g    / s**2 =    (g / cm**3) (cm / s) (cm**2 / s)
-
-                dRDvRell_dR         = np.zeros_like(RDvRell)   / np.ones_like(self.DRR)      # dyne / cm
-                dRDvRell_dR[1:-1,:] = ( RDvRell[2:,:] - RDvRell[:-2,:] ) / (2 * self.DRR[1:-1, :] + sys.float_info.epsilon * u.cm)
-            
-                dDvZell_dZ         = np.zeros_like(DvZell)   / np.ones_like(self.ZZ)         # dyne / cm**2
-                dDvZell_dZ[:,1:-1] = ( DvZell[:,2:] - DvZell[:,:-2] ) / (2 * self.DZZ[:, 1:-1] + sys.float_info.epsilon * u.cm)
+                dRDvRell_dR = self._div_dR(RDvRell)
+                dDvZell_dZ  = self._div_dZ(DvZell)
 
                 lhs_phi = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne/u.cm**2)
                 rhs_phi = np.zeros((self.mypars.nr,self.mypars.wind_ntheta)) * (u.dyne/u.cm**2) # If there were any torque terms...
 
                 lhs_phi[self.boundary_mask] = ( (dRDvRell_dR[self.boundary_mask] / self.RR[self.boundary_mask]) + \
-                                               dDvZell_dZ[self.boundary_mask] 
+                                                 dDvZell_dZ[self.boundary_mask] 
                                                ) # dyne / cm**2 = g cm / (s**2 cm**2) = g / (s**2 cm)
-               #rhs_phi[self.boundary_mask]  = self.RR * const.u * self.number_density * self.lorentz_factor * "self._g_rad_phi" if there were a g_rad_phi
+               #rhs_phi[self.boundary_mask]  = self.RR * const.u * number_density * self.lorentz_factor * "self._g_rad_phi" if there were a g_rad_phi
                #                               cm (g / cm**3) (cm / s**2) = dyne / cm**2
 
-                dell = (-dtime * (lhs_phi - rhs_phi) / (const.u * self.number_density * self.specific_enthalpy * self.lorentz_factor**2 + sys.float_info.epsilon * (u.g/u.cm**3))
-                        ).decompose(bases=u.cgs.bases) # What is the sign on this?
+               #          s * ( g / (s**2 cm) ) / (g / cm**3) = ( cm**2 / s )
+                dell = (-dtime * (lhs_phi - rhs_phi) / (const.u * number_density * self.specific_enthalpy + sys.float_info.epsilon * (u.g/u.cm**3))
+                        ).decompose(bases=u.cgs.bases)
 
-                ell_hRc_ratio = ell / (self.specific_enthalpy * self.RR * const.c)
-                dvph = ( dell / (self.specific_enthalpy * self.RR * self.lorentz_factor * (1 + ell_hRc_ratio * ell_hRc_ratio) )
-                    ).decompose(bases=u.cgs.bases)
-                dvph[self.in_disk] = 0.0 * (u.cm/u.s)
+                duph = ( dell / (self.specific_enthalpy * self.RR ) ).decompose(bases=u.cgs.bases)
+                duph[self.in_disk] = 0.0 * (u.cm/u.s)
 
-                bad_mask = self.boundary_mask & (np.fabs(dvph) >= const.c.cgs) & (self.number_density > 0)
-                if np.sum(bad_mask):
-                    print("\t"*ntabs + "-"*50)
-                    print("\t"*ntabs + f"{np.sum(bad_mask)} Bad dvph cells")
-                    print("\t"*ntabs + "-"*50)
-                    print("\t"*ntabs + "r/rg         z/rg         dvph/c         vph/c         dell                 ell                lhs_phi")
-                    for bdx in range(np.sum(bad_mask)):
-                        prtstr  = f"{self.RR[bad_mask][bdx]/self.mydisk.rg:10.6e} {self.ZZ[bad_mask][bdx]/self.mydisk.rg:10.6e}"
-                        prtstr += f" {dvph[bad_mask][bdx]/const.c.cgs:13.6e} {self.v_phi[bad_mask][bdx]/const.c.cgs:13.6e}"
-                        prtstr += f" {dell[bad_mask][bdx]:13.6e} {ell[bad_mask][bdx]:13.6e} {lhs_phi[bad_mask][bdx]:13.6e}"
-                        print("\t"*ntabs + prtstr)
-                    print("\t"*ntabs + "-"*50)
-
-                bad_mask = self.boundary_mask & (np.fabs(dvph) >= const.c.cgs)
-                if np.sum(bad_mask):
-                    dvph[bad_mask] = 0.0 * (u.cm/u.s)
-
-                return dvph
+                return duph
 
     ######################################################
     # Cylindrical R- and Z- components of the radiative force per unit mass
@@ -453,6 +460,10 @@ class mcgv:
                  ntabs = 0
                  ):
         return (const.G.cgs * self.mypars.mbh / (self.RR + 1.0e-100 * u.cm)**2) * self.Eddington_ratio * self.MZgrid
+
+    ######################################################
+    def _lorentz_factor(self):
+        return np.sqrt(1 + np.sum(self.u*self.u, axis = 0)/(const.c.cgs*const.c.cgs))
 
     ######################################################
     def _mcgv_timer(self, 
@@ -485,7 +496,14 @@ class mcgv:
     def _P_gas(self,
                ntabs = 0
                ):
-        return const.k_B.cgs * const.u * self.number_density * self.temperature / const.u.cgs
+
+        for arrstr,arr in [("number density", self.ref_number_density * np.exp(self.ln_number_density) ),
+                           (   "temperature", self.temperature                                         )
+                          ]:
+            if not self._sanity_check(arrstr,arr, function="mcgv._P_gas"):
+                input("Insane")
+
+        return const.k_B.cgs * self.ref_number_density * np.exp(self.ln_number_density) * self.temperature
 
     ######################################################
     def _sanity_check(self,
@@ -517,21 +535,24 @@ class mcgv:
                   ntabs = 0
                   ):
         mdu = u.g / u.cm**3
-        v_R_val  = (self.v_R[  :-1, :-1] / const.c).decompose()
-        v_Z_val  = (self.v_Z[  :-1, :-1] / const.c).decompose()
-        v_ph_val = (self.v_phi[:-1, :-1] / const.c).decompose()
 
-        dvR_val  = (self.dv_R[  :-1, :-1] / const.c).decompose()
-        dvZ_val  = (self.dv_Z[  :-1, :-1] / const.c).decompose()
-        dvph_val = (self.dv_phi[:-1, :-1] / const.c).decompose()
+        lorentz_factor_c = self._lorentz_factor() * const.c.cgs
+        v_R_val  = (self.u[0, :-1, :-1] / lorentz_factor_c[:-1, :-1] ).decompose()
+        v_Z_val  = (self.u[1, :-1, :-1] / lorentz_factor_c[:-1, :-1] ).decompose()
+        v_ph_val = (self.u[2, :-1, :-1] / lorentz_factor_c[:-1, :-1] ).decompose()
+
+        dvR_val  = (self.du[0, :-1, :-1] * (1 - ( self.u[0, :-1, :-1] / ( lorentz_factor_c[:-1, :-1] ) )**2) / (lorentz_factor_c[:-1, :-1] )).decompose()
+        dvZ_val  = (self.du[1, :-1, :-1] * (1 - ( self.u[1, :-1, :-1] / ( lorentz_factor_c[:-1, :-1] ) )**2) / (lorentz_factor_c[:-1, :-1] )).decompose()
+        dvph_val = (self.du[2, :-1, :-1] * (1 - ( self.u[2, :-1, :-1] / ( lorentz_factor_c[:-1, :-1] ) )**2) / (lorentz_factor_c[:-1, :-1] )).decompose()
 
         g_R_val = (self._g_rad_R() + self.BH_gR + self.disk_gR)[:-1,:-1].to(u.km/u.s**2).value + sys.float_info.epsilon
         g_Z_val = (self._g_rad_Z() + self.BH_gZ + self.disk_gZ)[:-1,:-1].to(u.km/u.s**2).value + sys.float_info.epsilon
 
-        num_dens_val = self.number_density[:-1,:-1].to(u.cm**-3).value + sys.float_info.epsilon
+        num_dens_val = (self.ref_number_density * np.exp(self.ln_number_density[:-1,:-1])).to(u.cm**-3).value + sys.float_info.epsilon
         temp_val     = self.temperature[:-1,:-1].to(u.K).value         + sys.float_info.epsilon
 
-        dlnrho = self.drho[:-1,:-1]/(rho_tmp[:-1,:-1] + sys.float_info.epsilon * mdu)
+        #dlnrho = self.drho[:-1,:-1]/(rho_tmp[:-1,:-1] + sys.float_info.epsilon * mdu)
+        dlnrho = self.dln_number_density[:-1,:-1]
 
         logMR = np.log10(np.fabs(self.MRgrid[:-1,:-1]) + sys.float_info.epsilon)
         logMZ = np.log10(np.fabs(self.MZgrid[:-1,:-1]) + sys.float_info.epsilon)
@@ -570,8 +591,8 @@ class mcgv:
         pltstr += f' Max |'+r'$\Delta$v|/c: '+f'[R{dvRmax:.2e}, '+r'$\phi$'+f'{dvphmax:.2e}, Z{dvZmax:.2e} ] \n'
 
         pltstr +=  r'$\Delta\rho/\rho$ range: '
-        pltstr += f'{np.min((dlnrho[self.boundary_mask[:-1,:-1]]).decompose()):.2e} to '
-        pltstr += f'{np.max((dlnrho[self.boundary_mask[:-1,:-1]]).decompose()):.2e} \n'
+        pltstr += f'{np.min((dlnrho[self.boundary_mask[:-1,:-1]])):.2e} to '
+        pltstr += f'{np.max((dlnrho[self.boundary_mask[:-1,:-1]])):.2e} \n'
         pltstr += f' Number of cells with '+r'$|\Delta\rho|/\rho>0.1$: '+f'{np.sum(np.fabs(dlnrho) > 0.1)} \n'
 
         pltstr += f' Number of simulated cells: {np.sum(self.boundary_mask)} ({time_out_nit})'
@@ -688,10 +709,11 @@ class mcgv:
             self.tottime       = hdul[1].header['SIMTIME'] * u.s
             self.RR            = hdul[1].data['R2D'] * u.cm
             self.ZZ            = hdul[1].data['Z2D'] * u.cm
-            self.v_R           = hdul[1].data['vR2D'] * (u.cm/u.s)
-            self.v_Z           = hdul[1].data['vZ2D'] * (u.cm/u.s)
-            self.v_phi         = hdul[1].data['vphi2D'] * (u.cm/u.s)
-            self.number_density  = hdul[1].data['rho2D'] * (u.cm**-3)
+            self.u             = np.zeros((3,) + self.RR.shape) * (u.cm/u.s)
+            self.u[0,:]        = hdul[1].data['uR2D'] * (u.cm/u.s)
+            self.u[1,:]        = hdul[1].data['uZ2D'] * (u.cm/u.s)
+            self.u[2,:]        = hdul[1].data['uphi2D'] * (u.cm/u.s)
+            number_density     = hdul[1].data['rho2D'] * (u.cm**-3)
             self.temperature   = hdul[1].data['T2D'] * (u.K)
             self.BH_gR         = hdul[1].data['BH_gR'] * (u.cm/u.s**2)
             self.BH_gZ         = hdul[1].data['BH_gZ'] * (u.cm/u.s**2)
@@ -699,18 +721,15 @@ class mcgv:
             self.disk_gZ       = hdul[1].data['disk_gZ'] * (u.cm/u.s**2)
             self.boundary_mask = hdul[1].data['boundary_mask']
 
-            # Sanity checking velocities
-            for vel in [self.v_R,self.v_Z,self.v_phi]:
-                where_bad = np.fabs((vel/const.c).decompose()) >= 1
-                if np.sum(where_bad) > 0:
-                    vel[where_bad] = 0 * (u.cm/u.s)
-
             self.bounded = True
 
             try:
                 self.column_density_table_grid = hdul[2].data['column_density_grid'] / u.cm**2
             except:
                 self.column_density_table_grid = np.zeros(self.RR.shape + (self.myatoms.photo_Z.size,)) / u.cm**2
+
+        self.ref_number_density = np.max(number_density)
+        self.ln_number_density = np.log(number_density / self.ref_number_density)
 
     ######################################################
     # Need to use R_vec to extract cells that are intercepted and determine optical depth attentuating the X-rays
@@ -877,7 +896,7 @@ class mcgv:
 
         if self._update_iteration % self.mypars.nproc == 0:
             plt.clf()
-            self.plot_grid(const.u * self.number_density,
+            self.plot_grid(const.u * self.ref_number_density * np.exp(self.ln_number_density),
                            -31.0 * u.s,
                            0.0 * u.s,
                            0.0 * u.s,
@@ -920,12 +939,13 @@ class mcgv:
     ######################################################
     def write_wind(self):
         datatab = Table(data=(self.RR,self.ZZ,
-                              self.v_R,self.v_Z,self.v_phi,
-                              self.number_density,self.temperature,
+                              self.u[0,:,:],self.u[1,:,:],self.u[2,:,:],
+                              self.ref_number_density * np.exp(self.ln_number_density),
+                              self.temperature,
                               self.BH_gR,self.BH_gZ,
                               self.disk_gR,self.disk_gZ,
                               self.boundary_mask), 
-                        names=['R2D','Z2D','vR2D','vZ2D','vphi2D','rho2D','T2D','BH_gR','BH_gZ','disk_gR','disk_gZ','boundary_mask']
+                        names=['R2D','Z2D','uR2D','uZ2D','uphi2D','rho2D','T2D','BH_gR','BH_gZ','disk_gR','disk_gZ','boundary_mask']
                           )
 
         table_hdu = fits.BinTableHDU(data=datatab)
