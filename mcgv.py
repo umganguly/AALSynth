@@ -147,6 +147,12 @@ class mcgv:
             if not self._sanity_check(arrstr,arr, function="mcgv.__init__"):
                 input("Insane")
 
+        for arrstr,arr in [("number density", self.ref_number_density * np.exp(self.ln_number_density) ),
+                           (   "temperature", self.temperature                                         )
+                          ]:
+            if not self._sanity_check(arrstr,arr, function="mcgv.__init__"):
+                input("Insane")
+
         if not self.bounded:
             print("\t" * ntabs + "Grabbing components of BH gravity")
             self.BH_gR = np.zeros(self.RR.shape)
@@ -351,6 +357,89 @@ class mcgv:
             input("paused in mcgv._enforce_boundary_conditions for de-nanification")
 
     ######################################################
+    def _div_dR(self,
+                A,
+                ntabs = 0
+                ):
+
+        for arrstr,arr in [(  "A", A        ),
+                           ("DRR", self.DRR )
+                          ]:
+            if not self._sanity_check(arrstr,
+                                      arr, 
+                                      function="mcgv._div_R",
+                                      ntabs = ntabs+1
+                                      ):
+                input("Insane")
+
+        dA_dR         = np.zeros_like(A) / u.cm
+        dA_dR[1:-1,:] = (  A[ 2:,  :]  - A[:-2, :] ) / (2 * self.DRR[1:-1, :] + sys.float_info.epsilon * u.cm)
+
+        return dA_dR
+
+    ######################################################
+    def _div_dZ(self,
+                A,
+                ntabs = 0
+                ):
+
+        for arrstr,arr in [(  "A", A        ),
+                           ("DZZ", self.DZZ )
+                          ]:
+            if not self._sanity_check(arrstr,
+                                      arr, 
+                                      function="mcgv._div_Z",
+                                      ntabs = ntabs+1
+                                      ):
+                input("Insane")
+
+        dA_dZ         = np.zeros_like(A) / u.cm
+        dA_dZ[1:-1,:] = ( A[ 2:,  :] - A[:-2, :] ) / (2 * self.DZZ[1:-1, :] + sys.float_info.epsilon * u.cm)
+
+        return dA_dZ
+
+    ######################################################
+    def _enforce_boundary_conditions(self,
+                                     ntabs = 0
+                                     ):
+        for arrstr,arr in [("1.0/self.mydisk.dzdr", 1.0/self.mydisk.dzdr),
+                           ("temperature", self.temperature ),
+                           ("RR", self.RR),
+                           ("ZZ", self.ZZ)
+                          ]:
+            if not self._sanity_check(arrstr,
+                                      arr, 
+                                      function="mcgv._enforce_boundary_conditions",
+                                      ntabs = ntabs+1
+                                      ):
+                input("Insane")
+
+
+        init_mask = (self.ZZ/self.mydisk.rg < 1.2 * self.mydisk.zt1[:,None])
+
+        v_angle = -np.arctan(1.0/self.mydisk.dzdr)
+        thermal_parameter = (const.k_B.cgs * self.temperature / (const.u.cgs * const.c.cgs * const.c.cgs)).decompose()
+        average_v_mj = 2 * const.c.cgs * thermal_parameter * (thermal_parameter + 1) * (np.exp(-1/(thermal_parameter + sys.float_info.epsilon))  + sys.float_info.epsilon) / (kn(2, 1/(thermal_parameter + sys.float_info.epsilon))  + sys.float_info.epsilon)
+        if np.any(np.isnan(average_v_mj)):
+            average_v_mj = np.sqrt(3 * const.k_B.cgs * self.temperature / const.u.cgs).to(u.cm/u.s)
+
+        ss = np.sqrt(self.RR * self.RR + self.ZZ * self.ZZ)
+
+        v_R = average_v_mj[init_mask] * np.sin((np.broadcast_to(v_angle, self.RR.T.shape).T)[init_mask])
+        v_Z = average_v_mj[init_mask] * np.cos((np.broadcast_to(v_angle, self.RR.T.shape).T)[init_mask])
+        v_P = np.sqrt(const.G * self.mypars.mbh / (ss[init_mask] + sys.float_info.epsilon * u.cm) ).decompose(bases=u.cgs.bases)
+        vsq = v_R * v_R + v_Z * v_Z + v_P * v_P
+        lorentz_factor = 1.0 / np.sqrt(1. - vsq / (const.c.cgs * const.c.cgs))
+
+        self.u[:, init_mask] = np.array([v_R.to(u.cm/u.s).value, 
+                                         v_Z.to(u.cm/u.s).value, 
+                                         v_P.to(u.cm/u.s).value
+                                         ]) * lorentz_factor * (u.cm/u.s)
+
+        if np.any(np.isnan(self.u)):
+            input("paused in mcgv._enforce_boundary_conditions for de-nanification")
+
+    ######################################################
     # Relativistic Euler equation residuals
     def _EULER_cylindrical(self, 
                            ln_number_density,
@@ -391,7 +480,7 @@ class mcgv:
                 dR_mdot_RdR = self._div_dR(self.RR * massflux_R) /  self.RR
                 dmdot_dZ    = self._div_dZ(massflux_Z)
 
-                lhs_rho = dR_mdot_RdR + dmdot_dZ
+                lhs_rho = (dR_mdot_RdR + dmdot_dZ) / (const.u.cgs * self.ref_number_density)
                 rhs_rho = np.zeros_like(lhs_rho) # Place holder for not having continuity
 
                 return lhs_rho - rhs_rho
@@ -516,6 +605,10 @@ class mcgv:
     def _lorentz_factor(self):
         u = self.u * self.ref_velocity
         return np.sqrt(1 + np.sum(u*u, axis = 0)/(const.c.cgs*const.c.cgs))
+
+    ######################################################
+    def _lorentz_factor(self):
+        return np.sqrt(1 + np.sum(self.u*self.u, axis = 0)/(const.c.cgs*const.c.cgs))
 
     ######################################################
     def _mcgv_timer(self, 
