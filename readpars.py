@@ -191,10 +191,16 @@ class readpars:
          ###########################################################################
          print("Wind parameters:")    
          try: 
-            print(f"Wind_ntheta = {self.wind_ntheta}")
+            print(f"Wind_nr = {self.wind_nr}")
          except AttributeError:
-            print(f"Wind_ntheta not defined in {inputfile}")
-            self.wind_ntheta = 90
+            print(f"Wind_nr not defined in {inputfile}")
+            self.wind_nr = 90
+
+         try: 
+            print(f"Wind_nz = {self.wind_nz}")
+         except AttributeError:
+            print(f"Wind_nz not defined in {inputfile}")
+            self.wind_nz = 90
 
          try: 
             print(f"Force multiplier update = {self.wind_mupdate}")

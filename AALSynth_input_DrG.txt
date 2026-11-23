@@ -4,8 +4,8 @@ datapath = "/mnt/data/AALSynth_data/"
 cloudypath  = "/mnt/data/c23.01/source/"
 nproc = 40
 verbose = True
-calcabscl = True
-calcwind = False
+calcabscl = False
+calcwind = True
 ############################################
 # Spectral synthesis
 minlox = 9.9
@@ -23,12 +23,12 @@ gaussleg_ntheta = 36
 ############################################
 # Black hole parameters
 sbh = 0.01
-mbh = 1.2e+8
-#mbh = 2.9e+8
+#mbh = 1.2e+8
+mbh = 2.9e+8
 ############################################
 # Accretion disk parameters
-mdot = 0.72
-#mdot = 0.19
+#mdot = 0.72
+mdot = 0.19
 viscosity_alpha = 0.1
 nr = 300
 rlo = 0.1
@@ -36,30 +36,31 @@ rhi = 1.0e+5
 dtheta_fac = 0.5
 ############################################
 # Wind parameters
-wind_ntheta = 175
+wind_nr = 128
+wind_nz = 128
 wind_mupdate = True
 minrg_bound = 50
 ############################################
 # Observer parameters
-zqso = 0.114272
-raqso = 175.19958333333
-decqso = 46.36805555556
-inclination = 20.0
-#zqso = 0.120196
-#raqso = 235.03226667
-#decqso = 14.19361111
-#inclination = 41.0
+#zqso = 0.114272
+#raqso = 175.19958333333
+#decqso = 46.36805555556
+#inclination = 20.0
+zqso = 0.120196
+raqso = 235.03226667
+decqso = 14.19361111
+inclination = 41.0
 ############################################
 # Absorber parameters
-abscloudfile = "WISEA_J114047_clouds.fits"
-#abscloudfile = "SDSS_J154007_clouds.fits"
+#abscloudfile = "WISEA_J114047_clouds.fits"
+abscloudfile = "SDSS_J154007_clouds.fits"
 softenning = 0.1
 ############################################
 # Data files
-qname = "WISEA J114047"
-qfileroot = "WISEA_J114047"
-#qname = "SDSS J154007"
-#qfileroot = "SDSS_J154007"
+#qname = "WISEA J114047"
+#qfileroot = "WISEA_J114047"
+qname = "SDSS J154007"
+qfileroot = "SDSS_J154007"
 redospline = False
 ############################################
 # Optimization parameters
@@ -75,4 +76,4 @@ F_test_prob = 0.05
 ############################################
 # Display parameters
 showgeometry = True
-interactive = True
+interactive = False
